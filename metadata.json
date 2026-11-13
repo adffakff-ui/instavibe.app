@@ -1,0 +1,6 @@
+{
+  "name": "InstaVibe",
+  "description": "A high-fidelity social media platform for sharing photos, videos, and stories with an elegant, modern interface.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

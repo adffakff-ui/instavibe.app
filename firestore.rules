@@ -1,0 +1,438 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // -------------------------------------------------------------------------
+    // 1. Global Safety Net & Helpers
+    // -------------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // -------------------------------------------------------------------------
+    // 2. Entity Validations
+    // -------------------------------------------------------------------------
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'username', 'email'])
+        && data.keys().hasOnly(['uid', 'username', 'fullName', 'bio', 'photoURL', 'email', 'interests', 'createdAt'])
+        && data.uid == request.auth.uid
+        && data.username is string && data.username.size() >= 3 && data.username.size() <= 30
+        && data.email is string && data.email.size() <= 100;
+    }
+
+    function isValidPost(data) {
+      return data.keys().hasAll(['authorId', 'mediaURL', 'mediaType'])
+        && data.keys().hasOnly(['id', 'authorId', 'authorUsername', 'authorPhotoURL', 'mediaURL', 'mediaType', 'caption', 'tags', 'likesCount', 'commentsCount', 'createdAt'])
+        && data.authorId == request.auth.uid
+        && data.mediaURL is string && data.mediaURL.size() <= 1000
+        && data.mediaType in ['image', 'video']
+        && (!('caption' in data) || data.caption == null || (data.caption is string && data.caption.size() <= 2200))
+        && (!('tags' in data) || (data.tags is list && data.tags.size() <= 30 && (data.tags.size() == 0 || data.tags[0] is string)));
+    }
+
+    function isValidStory(data) {
+      return data.keys().hasAll(['authorId', 'mediaURL'])
+        && data.keys().hasOnly(['id', 'authorId', 'authorUsername', 'authorPhotoURL', 'mediaURL', 'mediaType', 'caption', 'poll', 'createdAt', 'expiresAt'])
+        && data.authorId == request.auth.uid
+        && data.mediaURL is string && data.mediaURL.size() <= 900000
+        && (!('mediaType' in data) || data.mediaType == null || data.mediaType in ['image', 'video'])
+        && (!('caption' in data) || data.caption == null || (data.caption is string && data.caption.size() <= 1000))
+        && (!('poll' in data) || data.poll == null || (data.poll is map))
+        && (!('expiresAt' in data) || data.expiresAt == null || (data.expiresAt is string && data.expiresAt.size() <= 64));
+    }
+
+    function isValidComment(data) {
+      return data.keys().hasAll(['postId', 'userId', 'text'])
+        && data.keys().hasOnly(['id', 'postId', 'userId', 'username', 'userPhotoURL', 'text', 'likesCount', 'createdAt'])
+        && data.userId == request.auth.uid
+        && data.text is string && data.text.size() <= 1000
+        && (data.likesCount == null || data.likesCount is number);
+    }
+
+    function isValidCommentLike(data) {
+      return data.keys().hasAll(['commentId', 'userId'])
+        && data.keys().hasOnly(['postId', 'commentId', 'userId', 'createdAt'])
+        && data.userId == request.auth.uid;
+    }
+
+    function isValidLike(data) {
+      return data.keys().hasAll(['postId', 'userId'])
+        && data.keys().hasOnly(['postId', 'userId', 'createdAt'])
+        && data.userId == request.auth.uid;
+    }
+
+    function isValidHighlight(data) {
+      return data.keys().hasAll(['userId', 'title'])
+        && data.keys().hasOnly(['id', 'userId', 'title', 'coverImageURL', 'storyIds', 'createdAt'])
+        && data.userId == request.auth.uid
+        && data.title is string && data.title.size() <= 50
+        && (!('coverImageURL' in data) || data.coverImageURL == null || (data.coverImageURL is string && data.coverImageURL.size() <= 900000))
+        && (!('storyIds' in data) || data.storyIds == null || (data.storyIds is list && data.storyIds.size() <= 30));
+    }
+
+    function isValidLiveStream(data) {
+      return data.keys().hasAll(['hostId', 'hostUsername', 'title', 'category', 'status', 'allowComments', 'startedAt'])
+        && data.keys().hasOnly(['id', 'hostId', 'hostUsername', 'hostPhotoURL', 'title', 'category', 'thumbnailURL', 'status', 'allowComments', 'pinnedMessage', 'likesCount', 'commentsCount', 'peakViewers', 'guestId', 'guestUsername', 'guestPhotoURL', 'guestStatus', 'guestCamEnabled', 'guestMicEnabled', 'startedAt', 'endedAt'])
+        && isValidId(data.hostId)
+        && data.hostUsername is string && data.hostUsername.size() >= 1 && data.hostUsername.size() <= 50
+        && (!('hostPhotoURL' in data) || data.hostPhotoURL == null || (data.hostPhotoURL is string && data.hostPhotoURL.size() <= 900000))
+        && data.title is string && data.title.size() >= 1 && data.title.size() <= 120
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 40
+        && (!('thumbnailURL' in data) || data.thumbnailURL == null || (data.thumbnailURL is string && data.thumbnailURL.size() <= 250000))
+        && data.status in ['live', 'ended']
+        && data.allowComments is bool
+        && (!('pinnedMessage' in data) || data.pinnedMessage == null || (data.pinnedMessage is string && data.pinnedMessage.size() <= 300))
+        && (!('likesCount' in data) || (data.likesCount is number && data.likesCount >= 0))
+        && (!('commentsCount' in data) || (data.commentsCount is number && data.commentsCount >= 0))
+        && (!('peakViewers' in data) || (data.peakViewers is number && data.peakViewers >= 0))
+        && (!('guestId' in data) || data.guestId == null || isValidId(data.guestId))
+        && (!('guestUsername' in data) || data.guestUsername == null || (data.guestUsername is string && data.guestUsername.size() <= 50))
+        && (!('guestPhotoURL' in data) || data.guestPhotoURL == null || (data.guestPhotoURL is string && data.guestPhotoURL.size() <= 900000))
+        && (!('guestStatus' in data) || data.guestStatus in ['none', 'invited', 'active'])
+        && (!('guestCamEnabled' in data) || data.guestCamEnabled is bool)
+        && (!('guestMicEnabled' in data) || data.guestMicEnabled is bool);
+    }
+
+    function isValidLiveComment(data) {
+      return data.keys().hasAll(['streamId', 'userId', 'username', 'text', 'createdAt'])
+        && data.keys().hasOnly(['streamId', 'userId', 'username', 'userPhotoURL', 'text', 'createdAt'])
+        && isValidId(data.streamId)
+        && data.userId == request.auth.uid
+        && data.username is string && data.username.size() >= 1 && data.username.size() <= 50
+        && (!('userPhotoURL' in data) || data.userPhotoURL == null || (data.userPhotoURL is string && data.userPhotoURL.size() <= 900000))
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 300;
+    }
+
+    function isValidLiveViewer(data) {
+      return data.keys().hasAll(['streamId', 'userId', 'username', 'lastSeen'])
+        && data.keys().hasOnly(['streamId', 'userId', 'username', 'photoURL', 'joinedAt', 'lastSeen'])
+        && isValidId(data.streamId)
+        && data.userId == request.auth.uid
+        && data.username is string && data.username.size() >= 1 && data.username.size() <= 50
+        && (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 900000))
+        && data.lastSeen is number && data.lastSeen > 0;
+    }
+
+    function isValidLiveReaction(data) {
+      return data.keys().hasAll(['streamId', 'userId', 'emoji', 'createdAt'])
+        && data.keys().hasOnly(['streamId', 'userId', 'emoji', 'createdAt'])
+        && isValidId(data.streamId)
+        && data.userId == request.auth.uid
+        && data.emoji in ['heart', 'fire', 'clap', 'laugh', 'love', 'wow', 'party', 'sparkles'];
+    }
+
+    function isValidLiveSignal(data) {
+      return data.keys().hasAll(['streamId', 'fromUid', 'toUid', 'type', 'createdAt'])
+        && data.keys().hasOnly(['streamId', 'fromUid', 'toUid', 'type', 'channel', 'sdp', 'sdpType', 'candidate', 'createdAt'])
+        && isValidId(data.streamId)
+        && isValidId(data.fromUid)
+        && isValidId(data.toUid)
+        && data.fromUid == request.auth.uid
+        && data.type in ['join', 'offer', 'answer', 'candidate', 'leave']
+        && (!('channel' in data) || data.channel in ['host', 'guest'])
+        && (!('sdp' in data) || data.sdp == null || (data.sdp is string && data.sdp.size() <= 25000))
+        && (!('sdpType' in data) || data.sdpType == null || (data.sdpType is string && data.sdpType.size() <= 20))
+        && (!('candidate' in data) || data.candidate == null || data.candidate is map);
+    }
+
+    function isValidGuestRequest(data) {
+      return data.keys().hasAll(['streamId', 'userId', 'username', 'createdAt'])
+        && data.keys().hasOnly(['streamId', 'userId', 'username', 'photoURL', 'createdAt'])
+        && isValidId(data.streamId)
+        && data.userId == request.auth.uid
+        && data.username is string && data.username.size() >= 1 && data.username.size() <= 50
+        && (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 900000));
+    }
+
+    function isValidConversation(data) {
+      return data.keys().hasAll(['participantIds'])
+        && data.keys().hasOnly(['id', 'participantIds', 'lastMessage', 'lastMessageAt', 'updatedAt'])
+        && data.participantIds is list
+        && data.participantIds.size() == 2
+        && data.participantIds[0] is string && isValidId(data.participantIds[0])
+        && data.participantIds[1] is string && isValidId(data.participantIds[1])
+        && (!('lastMessage' in data) || data.lastMessage == null || (data.lastMessage is string && data.lastMessage.size() <= 2000))
+        && (!('lastMessageAt' in data) || data.lastMessageAt == null || data.lastMessageAt is timestamp);
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['conversationId', 'senderId'])
+        && data.keys().hasOnly(['id', 'conversationId', 'senderId', 'text', 'mediaURL', 'mediaType', 'createdAt'])
+        && isValidId(data.conversationId)
+        && data.senderId == request.auth.uid
+        && (!('text' in data) || data.text == null || (data.text is string && data.text.size() <= 4000))
+        && (!('mediaURL' in data) || data.mediaURL == null || (data.mediaURL is string && data.mediaURL.size() <= 900000))
+        && (!('mediaType' in data) || data.mediaType == null || data.mediaType in ['image', 'video']);
+    }
+
+    // -------------------------------------------------------------------------
+    // 3. Collection Rules
+    // -------------------------------------------------------------------------
+
+    function isBlocked(blockerId, userId) {
+      return exists(/databases/$(database)/documents/users/$(blockerId)/blockedUsers/$(userId));
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && !isBlocked(userId, request.auth.uid);
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() && isValidUser(incoming()) && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && isOwner(userId) && isValidUser(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt;
+      
+      match /blockedUsers/{blockedId} {
+        allow get: if isSignedIn() && (isOwner(userId) || isOwner(blockedId));
+        allow list: if isSignedIn() && isOwner(userId);
+        allow create, update, delete: if isSignedIn() && isOwner(userId);
+      }
+
+      match /highlights/{albumId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isOwner(userId) && isValidHighlight(incoming()) && incoming().createdAt == request.time;
+        allow update: if isSignedIn() && isOwner(userId) && isValidHighlight(incoming()) && incoming().createdAt == existing().createdAt;
+        allow delete: if isSignedIn() && isOwner(userId);
+      }
+    }
+
+    match /posts/{postId} {
+      allow get: if isSignedIn() && (resource == null || !isBlocked(resource.data.authorId, request.auth.uid));
+      allow list: if isSignedIn(); // Filtering is usually done client-side for lists, but 'get' is guarded
+      allow create: if isSignedIn() && isValidPost(incoming()) && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && (
+        (isOwner(existing().authorId) && isValidPost(incoming()) && incoming().createdAt == existing().createdAt)
+        || (incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount']) && !isBlocked(existing().authorId, request.auth.uid))
+      );
+      allow delete: if isSignedIn() && isOwner(existing().authorId);
+
+      match /likes/{userId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isOwner(userId) && isValidLike(incoming()) && !isBlocked(get(/databases/$(database)/documents/posts/$(postId)).data.authorId, userId);
+        allow delete: if isSignedIn() && isOwner(userId);
+      }
+
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && isValidComment(incoming()) && incoming().createdAt == request.time && !isBlocked(get(/databases/$(database)/documents/posts/$(postId)).data.authorId, incoming().userId);
+        allow update: if isSignedIn() && (
+          (isOwner(existing().userId) && isValidComment(incoming()))
+          || (incoming().diff(existing()).affectedKeys().hasOnly(['likesCount']) && !isBlocked(existing().userId, request.auth.uid))
+        );
+        allow delete: if isSignedIn() && (isOwner(existing().userId) || isOwner(get(/databases/$(database)/documents/posts/$(postId)).data.authorId));
+
+        match /likes/{userId} {
+          allow read: if isSignedIn();
+          allow create: if isSignedIn() && isOwner(userId) && isValidCommentLike(incoming()) && !isBlocked(get(/databases/$(database)/documents/posts/$(postId)/comments/$(commentId)).data.userId, userId);
+          allow delete: if isSignedIn() && isOwner(userId);
+        }
+      }
+    }
+
+    match /stories/{storyId} {
+      allow read: if isSignedIn() && (resource == null || isOwner(resource.data.authorId) || !isBlocked(resource.data.authorId, request.auth.uid));
+      allow create: if isSignedIn() && isValidStory(incoming()) && incoming().createdAt == request.time;
+      allow update: if isSignedIn() && (
+        (isOwner(existing().authorId) && isValidStory(incoming()) && incoming().createdAt == existing().createdAt)
+        || (incoming().diff(existing()).affectedKeys().hasOnly(['poll']) && !isBlocked(existing().authorId, request.auth.uid))
+      );
+      allow delete: if isSignedIn() && isOwner(existing().authorId);
+    }
+
+    match /users/{userId}/following/{followingId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isOwner(userId) && !isBlocked(followingId, userId);
+      allow delete: if isSignedIn() && isOwner(userId);
+    }
+
+    match /users/{userId}/followers/{followerId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isSignedIn() && isOwner(followerId);
+    }
+
+    function isParticipant(participantIds) {
+      return isSignedIn() && participantIds is list && request.auth.uid in participantIds;
+    }
+
+    match /conversations/{conversationId} {
+      allow get: if isSignedIn() && isValidId(conversationId) && (
+        resource == null
+          ? conversationId.matches('.*' + request.auth.uid + '.*')
+          : isParticipant(resource.data.participantIds)
+      );
+      allow list: if isSignedIn() && isParticipant(resource.data.participantIds);
+      allow create: if isSignedIn()
+        && isValidId(conversationId)
+        && isValidConversation(incoming())
+        && isParticipant(incoming().participantIds)
+        && incoming().updatedAt == request.time;
+      allow update: if isSignedIn()
+        && isValidId(conversationId)
+        && isParticipant(existing().participantIds)
+        && isValidConversation(incoming())
+        && incoming().participantIds == existing().participantIds
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['lastMessage', 'lastMessageAt', 'updatedAt']);
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn()
+          && isValidId(conversationId)
+          && isParticipant(get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds);
+        allow create: if isSignedIn()
+          && isValidId(conversationId)
+          && isValidId(messageId)
+          && isValidMessage(incoming())
+          && incoming().conversationId == conversationId
+          && incoming().createdAt == request.time
+          && isParticipant(get(/databases/$(database)/documents/conversations/$(conversationId)).data.participantIds);
+      }
+    }
+
+    match /users/{userId}/notifications/{notificationId} {
+      allow read: if isSignedIn() && isOwner(userId);
+      allow create: if isSignedIn(); // Allow others to notify user
+      allow update: if isSignedIn() && isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow delete: if isSignedIn() && isOwner(userId);
+    }
+
+    match /liveStreams/{streamId} {
+      allow get: if isSignedIn() && isValidId(streamId) && (resource == null || !isBlocked(resource.data.hostId, request.auth.uid));
+      allow list: if isSignedIn() && resource.data.status in ['live', 'ended'];
+      allow create: if isSignedIn()
+        && isValidId(streamId)
+        && isValidLiveStream(incoming())
+        && incoming().hostId == request.auth.uid
+        && incoming().status == 'live'
+        && incoming().startedAt == request.time;
+      allow update: if isSignedIn()
+        && isValidId(streamId)
+        && existing().status == 'live'
+        && isValidLiveStream(incoming())
+        && (
+          (isOwner(existing().hostId)
+            && incoming().hostId == existing().hostId
+            && incoming().startedAt == existing().startedAt
+            && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'allowComments', 'pinnedMessage', 'thumbnailURL', 'status', 'endedAt', 'peakViewers', 'guestId', 'guestUsername', 'guestPhotoURL', 'guestStatus', 'guestCamEnabled', 'guestMicEnabled']))
+          || (existing().guestId == request.auth.uid
+            && existing().guestStatus in ['invited', 'active']
+            && incoming().hostId == existing().hostId
+            && incoming().startedAt == existing().startedAt
+            && incoming().diff(existing()).affectedKeys().hasOnly(['guestId', 'guestUsername', 'guestPhotoURL', 'guestStatus', 'guestCamEnabled', 'guestMicEnabled'])
+            && ((incoming().guestStatus == 'active' && incoming().guestId == request.auth.uid)
+              || (incoming().guestStatus == 'none' && incoming().guestId == null)))
+          || (incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount', 'peakViewers'])
+            && !isBlocked(existing().hostId, request.auth.uid))
+        );
+      allow delete: if isSignedIn() && isValidId(streamId) && isOwner(existing().hostId);
+
+      match /comments/{commentId} {
+        allow read: if isSignedIn() && isValidId(streamId) && !isBlocked(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId, request.auth.uid);
+        allow create: if isSignedIn()
+          && isValidId(streamId)
+          && isValidId(commentId)
+          && isValidLiveComment(incoming())
+          && incoming().streamId == streamId
+          && incoming().createdAt == request.time
+          && get(/databases/$(database)/documents/liveStreams/$(streamId)).data.status == 'live'
+          && get(/databases/$(database)/documents/liveStreams/$(streamId)).data.allowComments == true
+          && !isBlocked(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId, request.auth.uid);
+        allow delete: if isSignedIn()
+          && isValidId(streamId)
+          && isValidId(commentId)
+          && (isOwner(existing().userId) || isOwner(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId));
+      }
+
+      match /viewers/{viewerId} {
+        allow read: if isSignedIn() && isValidId(streamId);
+        allow create: if isSignedIn()
+          && isValidId(streamId)
+          && isValidId(viewerId)
+          && isOwner(viewerId)
+          && isValidLiveViewer(incoming())
+          && incoming().streamId == streamId
+          && get(/databases/$(database)/documents/liveStreams/$(streamId)).data.status == 'live'
+          && !isBlocked(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId, viewerId);
+        allow update: if isSignedIn()
+          && isValidId(streamId)
+          && isValidId(viewerId)
+          && isOwner(viewerId)
+          && isValidLiveViewer(incoming())
+          && incoming().streamId == existing().streamId
+          && incoming().userId == existing().userId
+          && incoming().diff(existing()).affectedKeys().hasOnly(['lastSeen', 'username', 'photoURL']);
+        allow delete: if isSignedIn()
+          && isValidId(streamId)
+          && isValidId(viewerId)
+          && (isOwner(viewerId) || isOwner(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId));
+      }
+
+      match /reactions/{reactionId} {
+        allow read: if isSignedIn() && isValidId(streamId);
+        allow create: if isSignedIn()
+          && isValidId(streamId)
+          && isValidId(reactionId)
+          && isValidLiveReaction(incoming())
+          && incoming().streamId == streamId
+          && incoming().createdAt == request.time
+          && get(/databases/$(database)/documents/liveStreams/$(streamId)).data.status == 'live'
+          && !isBlocked(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId, request.auth.uid);
+        allow delete: if isSignedIn()
+          && isValidId(streamId)
+          && isValidId(reactionId)
+          && (isOwner(existing().userId) || isOwner(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId));
+      }
+
+      match /signals/{signalId} {
+        allow get: if isSignedIn() && isValidId(streamId) && isValidId(signalId) && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid);
+        allow list: if isSignedIn() && (resource.data.toUid == request.auth.uid || resource.data.fromUid == request.auth.uid);
+        allow create: if isSignedIn()
+          && isValidId(streamId)
+          && isValidId(signalId)
+          && isValidLiveSignal(incoming())
+          && incoming().streamId == streamId
+          && incoming().createdAt == request.time
+          && !isBlocked(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId, request.auth.uid);
+        allow delete: if isSignedIn()
+          && isValidId(streamId)
+          && isValidId(signalId)
+          && (existing().toUid == request.auth.uid || existing().fromUid == request.auth.uid || isOwner(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId));
+      }
+
+      match /guestRequests/{requesterId} {
+        allow read: if isSignedIn() && isValidId(streamId);
+        allow create: if isSignedIn()
+          && isValidId(streamId)
+          && isValidId(requesterId)
+          && isOwner(requesterId)
+          && isValidGuestRequest(incoming())
+          && incoming().streamId == streamId
+          && incoming().createdAt == request.time
+          && get(/databases/$(database)/documents/liveStreams/$(streamId)).data.status == 'live'
+          && !isBlocked(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId, requesterId);
+        allow delete: if isSignedIn()
+          && isValidId(streamId)
+          && isValidId(requesterId)
+          && (isOwner(requesterId) || isOwner(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId));
+      }
+    }
+  }
+}

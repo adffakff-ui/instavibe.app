@@ -1,0 +1,366 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique user ID" },
+        "username": { "type": "string", "description": "Display username" },
+        "fullName": { "type": "string", "description": "Full name of the user" },
+        "bio": { "type": "string", "description": "Short user biography" },
+        "photoURL": { "type": "string", "description": "URL to profile photo" },
+        "email": { "type": "string", "description": "User email address" },
+        "interests": { "type": "object", "description": "Map of tag names to interest scores" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "username", "email"]
+    },
+    "Post": {
+      "title": "Post",
+      "description": "A social media post with image or video",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorId": { "type": "string" },
+        "authorUsername": { "type": "string" },
+        "authorPhotoURL": { "type": "string" },
+        "mediaURL": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["image", "video"] },
+        "caption": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "likesCount": { "type": "number" },
+        "commentsCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "mediaURL", "mediaType"]
+    },
+    "Story": {
+      "title": "Story",
+      "description": "Short-lived visual content",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "authorId": { "type": "string" },
+        "authorUsername": { "type": "string" },
+        "authorPhotoURL": { "type": "string" },
+        "mediaURL": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["image", "video"] },
+        "caption": { "type": "string" },
+        "poll": { 
+          "type": "object",
+          "description": "Optional interactive poll sticker",
+          "properties": {
+            "question": { "type": "string" },
+            "optionA": { "type": "string" },
+            "optionB": { "type": "string" },
+            "votesA": { "type": "number" },
+            "votesB": { "type": "number" },
+            "voters": { "type": "object" }
+          }
+        },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["authorId", "mediaURL"]
+    },
+    "Like": {
+      "title": "Like",
+      "description": "A post like interaction",
+      "type": "object",
+      "properties": {
+        "postId": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["postId", "userId"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "A post comment interaction",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "postId": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "userPhotoURL": { "type": "string" },
+        "text": { "type": "string" },
+        "likesCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["postId", "userId", "text"]
+    },
+    "CommentLike": {
+      "title": "CommentLike",
+      "description": "A like on a specific post comment",
+      "type": "object",
+      "properties": {
+        "postId": { "type": "string" },
+        "commentId": { "type": "string" },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["commentId", "userId"]
+    },
+    "Follow": {
+      "title": "Follow",
+      "description": "User follow relationship",
+      "type": "object",
+      "properties": {
+        "followerId": { "type": "string" },
+        "followingId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["followerId", "followingId"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "A direct message conversation between two users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "participantIds": { "type": "array", "description": "Array of 2 user IDs" },
+        "lastMessage": { "type": "string" },
+        "lastMessageAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["participantIds"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A single message in a conversation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "text": { "type": "string" },
+        "mediaURL": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["image", "video"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["conversationId", "senderId"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "An in-app notification for likes, follows, or messages",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "recipientId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderUsername": { "type": "string" },
+        "senderPhotoURL": { "type": "string" },
+        "type": { "type": "string", "enum": ["like", "follow", "message", "comment"] },
+        "postId": { "type": "string" },
+        "text": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["recipientId", "senderId", "type"]
+    },
+    "Block": {
+      "title": "Block",
+      "description": "User block relationship",
+      "type": "object",
+      "properties": {
+        "blockerId": { "type": "string" },
+        "blockedId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["blockerId", "blockedId"]
+    },
+    "HighlightAlbum": {
+      "title": "HighlightAlbum",
+      "description": "A collection of favorite stories saved permanently on a profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "coverImageURL": { "type": "string" },
+        "storyIds": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title"]
+    },
+    "LiveStream": {
+      "title": "LiveStream",
+      "description": "A real-time live video/audio broadcast session",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "hostId": { "type": "string" },
+        "hostUsername": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "hostPhotoURL": { "type": "string", "maxLength": 900000 },
+        "title": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "thumbnailURL": { "type": "string", "maxLength": 250000 },
+        "status": { "type": "string", "enum": ["live", "ended"] },
+        "allowComments": { "type": "boolean" },
+        "pinnedMessage": { "type": "string", "maxLength": 300 },
+        "likesCount": { "type": "number" },
+        "commentsCount": { "type": "number" },
+        "peakViewers": { "type": "number" },
+        "guestId": { "type": "string" },
+        "guestUsername": { "type": "string", "maxLength": 50 },
+        "guestPhotoURL": { "type": "string", "maxLength": 900000 },
+        "guestStatus": { "type": "string", "enum": ["none", "invited", "active"] },
+        "guestCamEnabled": { "type": "boolean" },
+        "guestMicEnabled": { "type": "boolean" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "endedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["hostId", "hostUsername", "title", "category", "status", "allowComments"]
+    },
+    "LiveComment": {
+      "title": "LiveComment",
+      "description": "A real-time chat message inside a live stream",
+      "type": "object",
+      "properties": {
+        "streamId": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "userPhotoURL": { "type": "string", "maxLength": 900000 },
+        "text": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["streamId", "userId", "username", "text"]
+    },
+    "LiveViewer": {
+      "title": "LiveViewer",
+      "description": "Active viewer presence inside a live stream",
+      "type": "object",
+      "properties": {
+        "streamId": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "photoURL": { "type": "string", "maxLength": 900000 },
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "lastSeen": { "type": "number" }
+      },
+      "required": ["streamId", "userId", "username", "lastSeen"]
+    },
+    "LiveReaction": {
+      "title": "LiveReaction",
+      "description": "A real-time floating reaction during a live broadcast",
+      "type": "object",
+      "properties": {
+        "streamId": { "type": "string" },
+        "userId": { "type": "string" },
+        "emoji": { "type": "string", "enum": ["heart", "fire", "clap", "laugh", "love", "wow", "party", "sparkles"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["streamId", "userId", "emoji"]
+    },
+    "LiveSignal": {
+      "title": "LiveSignal",
+      "description": "WebRTC peer-to-peer signaling message between broadcaster and viewer",
+      "type": "object",
+      "properties": {
+        "streamId": { "type": "string" },
+        "fromUid": { "type": "string" },
+        "toUid": { "type": "string" },
+        "type": { "type": "string", "enum": ["join", "offer", "answer", "candidate", "leave"] },
+        "channel": { "type": "string", "enum": ["host", "guest"] },
+        "sdp": { "type": "string", "maxLength": 25000 },
+        "sdpType": { "type": "string", "maxLength": 20 },
+        "candidate": { "type": "object" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["streamId", "fromUid", "toUid", "type"]
+    },
+    "GuestRequest": {
+      "title": "GuestRequest",
+      "description": "A viewer request to co-host a live stream",
+      "type": "object",
+      "properties": {
+        "streamId": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string", "minLength": 1, "maxLength": 50 },
+        "photoURL": { "type": "string", "maxLength": 900000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["streamId", "userId", "username"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile documents"
+    },
+    "/posts/{postId}": {
+      "schema": "Post",
+      "description": "Global feed posts"
+    },
+    "/stories/{storyId}": {
+      "schema": "Story",
+      "description": "Active stories"
+    },
+    "/posts/{postId}/likes/{userId}": {
+      "schema": "Like",
+      "description": "Post likes"
+    },
+    "/posts/{postId}/comments/{commentId}": {
+      "schema": "Comment",
+      "description": "Post comments"
+    },
+    "/posts/{postId}/comments/{commentId}/likes/{userId}": {
+      "schema": "CommentLike",
+      "description": "Likes on individual comments"
+    },
+    "/users/{userId}/following/{followingId}": {
+      "schema": "Follow",
+      "description": "Users this user follows"
+    },
+    "/users/{userId}/followers/{followerId}": {
+      "schema": "Follow",
+      "description": "Users following this user"
+    },
+    "/users/{userId}/highlights/{albumId}": {
+      "schema": "HighlightAlbum",
+      "description": "User story highlight albums"
+    },
+    "/conversations/{conversationId}": {
+      "schema": "Conversation",
+      "description": "Direct message conversations"
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Messages within a conversation"
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notifications"
+    },
+    "/users/{userId}/blockedUsers/{blockedId}": {
+      "schema": "Block",
+      "description": "Users blocked by this user"
+    },
+    "/liveStreams/{streamId}": {
+      "schema": "LiveStream",
+      "description": "Live broadcast sessions"
+    },
+    "/liveStreams/{streamId}/comments/{commentId}": {
+      "schema": "LiveComment",
+      "description": "Real-time comments in a live stream"
+    },
+    "/liveStreams/{streamId}/viewers/{viewerId}": {
+      "schema": "LiveViewer",
+      "description": "Active viewers in a live stream"
+    },
+    "/liveStreams/{streamId}/reactions/{reactionId}": {
+      "schema": "LiveReaction",
+      "description": "Live floating reactions"
+    },
+    "/liveStreams/{streamId}/signals/{signalId}": {
+      "schema": "LiveSignal",
+      "description": "WebRTC signaling messages for a live stream"
+    },
+    "/liveStreams/{streamId}/guestRequests/{userId}": {
+      "schema": "GuestRequest",
+      "description": "Requests from viewers to join as live co-host"
+    }
+  }
+}
