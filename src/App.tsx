@@ -15,6 +15,7 @@ import { usePWAInstall } from './hooks/usePWAInstall';
 import { LogIn, Download, Smartphone } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useBlockedConversationListener } from './hooks/useBlockedConversationListener';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 
 function AppContent() {
   const { user, loading, signIn, language, setLanguage, blockedUsers } = useAuth();
@@ -209,6 +210,7 @@ export default function App() {
   return (
     <AuthProvider>
       <AppContent />
+      <SpeedInsights />
     </AuthProvider>
   );
 }
