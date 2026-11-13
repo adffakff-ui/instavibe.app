@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "app.vercel.instavibeapp.twa",
+        "sha256_cert_fingerprints": ["5A:C8:E3:D3:ED:0A:E0:2A:FC:F5:DD:D0:6D:06:87:A5:B7:A5:4D:A2:A0:45:8D:9C:BE:E8:45:F1:58:76:3B:0D"]
+      }
+    }]
