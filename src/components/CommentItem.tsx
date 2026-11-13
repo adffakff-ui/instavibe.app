@@ -6,6 +6,7 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
+import UserAvatar from './UserAvatar';
 
 export interface CommentData {
   id: string;
@@ -15,7 +16,6 @@ export interface CommentData {
   userPhotoURL?: string;
   text: string;
   likesCount?: number;
-  isLikedByMe?: boolean;
   createdAt: any;
 }
 
@@ -24,7 +24,6 @@ interface CommentItemProps {
   comment: CommentData;
   onOpenProfile?: (uid: string) => void;
   onReply?: (username: string) => void;
-  onDemoToggleLike?: (commentId: string) => void;
 }
 
 export default function CommentItem({
@@ -32,29 +31,24 @@ export default function CommentItem({
   comment,
   onOpenProfile,
   onReply,
-  onDemoToggleLike,
 }: CommentItemProps) {
   const { user, profile, language } = useAuth();
   const { likeComment, unlikeComment } = useFirestore();
 
-  const [isLiked, setIsLiked] = useState<boolean>(Boolean(comment.isLikedByMe));
+  const [isLiked, setIsLiked] = useState<boolean>(false);
   const [likesCount, setLikesCount] = useState<number>(comment.likesCount || 0);
   const [isAnimating, setIsAnimating] = useState<boolean>(false);
   const pendingRef = useRef<boolean>(false);
 
-  // Sync likesCount and demo liked state with real-time prop updates
   useEffect(() => {
     if (typeof comment.likesCount === 'number') {
       setLikesCount(comment.likesCount);
     }
-    if (typeof comment.isLikedByMe === 'boolean') {
-      setIsLiked(comment.isLikedByMe);
-    }
-  }, [comment.likesCount, comment.isLikedByMe]);
+  }, [comment.likesCount]);
 
   // Real-time listener for whether the current user liked this comment in Firestore
   useEffect(() => {
-    if (!user || !comment.id || comment.id.startsWith('demo-') || postId.startsWith('demo-')) return;
+    if (!user || !comment.id || !postId) return;
 
     const likeRef = doc(db, 'posts', postId, 'comments', comment.id, 'likes', user.uid);
     const unsubscribe = onSnapshot(
@@ -82,18 +76,6 @@ export default function CommentItem({
       setTimeout(() => setIsAnimating(false), 450);
     }
 
-    // Demo post comment handling
-    if (comment.id.startsWith('demo-') || postId.startsWith('demo-')) {
-      if (onDemoToggleLike) {
-        onDemoToggleLike(comment.id);
-      } else {
-        setIsLiked(newLikedState);
-        setLikesCount((prev) => (newLikedState ? prev + 1 : Math.max(0, prev - 1)));
-      }
-      return;
-    }
-
-    // Optimistic UI update for Firestore comment
     pendingRef.current = true;
     setIsLiked(newLikedState);
     setLikesCount((prev) => (newLikedState ? prev + 1 : Math.max(0, prev - 1)));
@@ -112,7 +94,6 @@ export default function CommentItem({
       }
     } catch (err) {
       console.error('Error toggling comment like:', err);
-      // Revert optimistic update on failure
       setIsLiked(!newLikedState);
       setLikesCount((prev) => (!newLikedState ? prev + 1 : Math.max(0, prev - 1)));
     } finally {
@@ -131,17 +112,15 @@ export default function CommentItem({
 
   return (
     <div className="flex items-start justify-between gap-2 py-1.5 group/comment hover:bg-slate-50/70 dark:hover:bg-slate-800/30 px-1.5 rounded-xl transition-colors">
-      {/* Avatar + Comment Body */}
       <div className="flex items-start gap-2.5 flex-1 min-w-0">
         <div
           onClick={() => onOpenProfile?.(comment.userId)}
           className="w-7 h-7 rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800 shrink-0 cursor-pointer border border-slate-200/60 dark:border-slate-700/60 hover:opacity-85 transition-opacity mt-0.5"
         >
-          <img
-            src={comment.userPhotoURL || '/placeholder-avatar.jpg'}
-            alt={comment.username}
-            className="w-full h-full object-cover"
-            referrerPolicy="no-referrer"
+          <UserAvatar
+            src={comment.userPhotoURL}
+            username={comment.username}
+            iconSize={13}
           />
         </div>
 
@@ -156,7 +135,6 @@ export default function CommentItem({
             <span>{comment.text}</span>
           </p>
 
-          {/* Meta row: Time, Real-time Likes Counter, Reply */}
           <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400 font-medium">
             <span>{formattedTime}</span>
 
@@ -188,7 +166,6 @@ export default function CommentItem({
         </div>
       </div>
 
-      {/* Heart Like Button with animation + real-time counter */}
       <div className="flex items-center gap-1 shrink-0 -me-1">
         <button
           type="button"

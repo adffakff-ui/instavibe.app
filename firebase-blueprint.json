@@ -30,6 +30,7 @@
         "caption": { "type": "string" },
         "tags": { "type": "array", "items": { "type": "string" } },
         "likesCount": { "type": "number" },
+        "reactionCounts": { "type": "object", "description": "Map of reaction type to count" },
         "commentsCount": { "type": "number" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
@@ -47,6 +48,8 @@
         "mediaURL": { "type": "string" },
         "mediaType": { "type": "string", "enum": ["image", "video"] },
         "caption": { "type": "string" },
+        "likesCount": { "type": "number" },
+        "reactionCounts": { "type": "object", "description": "Map of reaction type to count" },
         "poll": { 
           "type": "object",
           "description": "Optional interactive poll sticker",
@@ -66,14 +69,31 @@
     },
     "Like": {
       "title": "Like",
-      "description": "A post like interaction",
+      "description": "A post or reel like/reaction interaction",
       "type": "object",
       "properties": {
         "postId": { "type": "string" },
         "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "userPhotoURL": { "type": "string" },
+        "reaction": { "type": "string", "enum": ["heart", "love", "laugh", "wow", "fire", "clap"] },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["postId", "userId"]
+    },
+    "StoryReaction": {
+      "title": "StoryReaction",
+      "description": "A persistent like or emoji reaction on a story",
+      "type": "object",
+      "properties": {
+        "storyId": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "userPhotoURL": { "type": "string" },
+        "reaction": { "type": "string", "enum": ["heart", "love", "laugh", "wow", "fire", "clap"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["storyId", "userId", "reaction"]
     },
     "Comment": {
       "title": "Comment",
@@ -283,6 +303,25 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["streamId", "userId", "username"]
+    },
+    "SavedPost": {
+      "title": "SavedPost",
+      "description": "A bookmarked post saved by a user",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "postId": { "type": "string" },
+        "authorId": { "type": "string" },
+        "authorUsername": { "type": "string" },
+        "authorPhotoURL": { "type": "string" },
+        "mediaURL": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["image", "video"] },
+        "caption": { "type": "string" },
+        "likesCount": { "type": "number" },
+        "commentsCount": { "type": "number" },
+        "savedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "postId", "mediaURL", "mediaType"]
     }
   },
   "firestore": {
@@ -297,6 +336,10 @@
     "/stories/{storyId}": {
       "schema": "Story",
       "description": "Active stories"
+    },
+    "/stories/{storyId}/reactions/{userId}": {
+      "schema": "StoryReaction",
+      "description": "Persistent likes and emoji reactions on stories"
     },
     "/posts/{postId}/likes/{userId}": {
       "schema": "Like",
@@ -361,6 +404,10 @@
     "/liveStreams/{streamId}/guestRequests/{userId}": {
       "schema": "GuestRequest",
       "description": "Requests from viewers to join as live co-host"
+    },
+    "/users/{userId}/savedPosts/{postId}": {
+      "schema": "SavedPost",
+      "description": "Posts bookmarked by a user"
     }
   }
 }

@@ -9,7 +9,6 @@ import {
 } from 'firebase/firestore';
 import {
   Clapperboard,
-  Heart,
   MessageCircle,
   Send,
   Volume2,
@@ -17,33 +16,27 @@ import {
   Play,
   Plus,
   X,
-  UserPlus,
-  UserCheck,
   Loader2,
   ChevronUp,
   ChevronDown,
+  Bookmark,
+  Share2,
+  Check,
 } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
 import CommentItem, { CommentData } from './CommentItem';
 import PostCreation from './PostCreation';
-
-const DEMO_REELS = [
-  {
-    id: 'demo-reel-1',
-    authorId: 'user_ocean',
-    authorUsername: 'ocean_escapes',
-    authorPhotoURL: '/src/assets/images/avatar_woman_1794501562592.jpg',
-    mediaURL: 'https://assets.mixkit.co/videos/preview/mixkit-vertical-view-of-waves-on-a-beach-43187-large.mp4',
-    mediaType: 'video' as const,
-    caption: 'أمواج المحيط الهادئة وقت الغروب 🌊🎥 #طبيعة #هدوء',
-    captionEn: 'Calm ocean waves at sunset 🌊🎥 #ocean #relax',
-    likesCount: 342,
-    commentsCount: 24,
-    createdAt: { toDate: () => new Date() },
-  },
-];
+import UserAvatar from './UserAvatar';
+import FollowButton from './FollowButton';
+import {
+  BurstInstance,
+  ReactionControl,
+  TapBurstOverlay,
+} from './ReactionBar';
+import { REACTION_MAP, ReactionType, normalizeReaction } from '../utils/reactions';
+import { sharePostContent } from '../utils/savedPosts';
 
 interface ReelCardProps {
   reel: any;
@@ -62,38 +55,81 @@ function ReelCard({
   onOpenChat,
   onOpenComments,
 }: ReelCardProps) {
-  const { user, profile, following, language, t } = useAuth();
-  const { likePost, unlikePost, followUser, unfollowUser, getOrCreateConversation } = useFirestore();
+  const { user, profile, language, t } = useAuth();
+  const {
+    reactToPost,
+    unlikePost,
+    getOrCreateConversation,
+    savePost,
+    unsavePost,
+  } = useFirestore();
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const lastTapRef = useRef<number>(0);
+  const singleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [userPaused, setUserPaused] = useState(false);
-  const [liked, setLiked] = useState(false);
+  const [activeReaction, setActiveReaction] = useState<ReactionType | null>(null);
   const [likesCount, setLikesCount] = useState<number>(reel.likesCount || 0);
-  const [likeAnimating, setLikeAnimating] = useState(false);
+  const [reactionCounts, setReactionCounts] = useState<Record<string, number>>(reel.reactionCounts || {});
+  const [bursts, setBursts] = useState<BurstInstance[]>([]);
+  const [isSaved, setIsSaved] = useState(false);
+  const [reelToast, setReelToast] = useState<string | null>(null);
 
-  const isDemo = reel.id?.startsWith('demo-');
   const isOwn = user?.uid === reel.authorId;
-  const isFollowing = following.includes(reel.authorId);
+
+  const showReelToast = (msg: string) => {
+    setReelToast(msg);
+    setTimeout(() => setReelToast(null), 2400);
+  };
 
   useEffect(() => {
-    if (typeof reel.likesCount === 'number' && !isDemo) {
+    return () => {
+      if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!user || !reel?.id) {
+      setIsSaved(false);
+      return;
+    }
+    const savedRef = doc(db, 'users', user.uid, 'savedPosts', reel.id);
+    const unsub = onSnapshot(
+      savedRef,
+      (snap) => setIsSaved(snap.exists()),
+      (err) => console.warn('Reel saved listener notice:', err)
+    );
+    return unsub;
+  }, [user, reel?.id]);
+
+  useEffect(() => {
+    if (typeof reel.likesCount === 'number') {
       setLikesCount(reel.likesCount);
     }
-  }, [reel.likesCount, isDemo]);
+    if (reel.reactionCounts && typeof reel.reactionCounts === 'object') {
+      setReactionCounts(reel.reactionCounts);
+    }
+  }, [reel.likesCount, reel.reactionCounts]);
 
   useEffect(() => {
-    if (!user || !reel?.id || isDemo) return;
+    if (!user || !reel?.id) return;
     const likeRef = doc(db, 'posts', reel.id, 'likes', user.uid);
     const unsub = onSnapshot(
       likeRef,
-      (snap) => setLiked(snap.exists()),
+      (snap) => {
+        if (snap.exists()) {
+          setActiveReaction(normalizeReaction(snap.data().reaction, 'heart'));
+        } else {
+          setActiveReaction(null);
+        }
+      },
       (err) => console.warn('Reel like listener notice:', err)
     );
     return unsub;
-  }, [user, reel?.id, isDemo]);
+  }, [user, reel?.id]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -170,32 +206,93 @@ function ReelCard({
     }
   };
 
-  const handleLike = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const spawnBurst = (emoji: string, x?: number, y?: number) => {
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    setBursts((prev) => [...prev, { id, emoji, x, y }]);
+    setTimeout(() => {
+      setBursts((prev) => prev.filter((b) => b.id !== id));
+    }, 820);
+  };
+
+  const applyReaction = (reaction: ReactionType, options?: { keepExisting?: boolean }) => {
     if (!user || !profile) return;
-    const next = !liked;
-    setLiked(next);
-    setLikesCount((prev) => (next ? prev + 1 : Math.max(0, prev - 1)));
-    if (next) {
-      setLikeAnimating(true);
-      setTimeout(() => setLikeAnimating(false), 380);
+    const prevReaction = activeReaction;
+
+    if (options?.keepExisting && prevReaction) {
+      return;
     }
-    if (isDemo) return;
-    if (next) {
-      likePost(reel.id, user.uid, reel.authorId, profile, reel.tags || []);
-    } else {
+
+    if (prevReaction === reaction) {
+      setActiveReaction(null);
+      setLikesCount((prev) => Math.max(0, prev - 1));
+      setReactionCounts((prev) => {
+        const next = { ...prev };
+        if (next[prevReaction] && next[prevReaction] > 0) {
+          next[prevReaction] -= 1;
+          if (next[prevReaction] <= 0) delete next[prevReaction];
+        }
+        return next;
+      });
       unlikePost(reel.id, user.uid);
+      return;
+    }
+
+    setActiveReaction(reaction);
+    if (!prevReaction) {
+      setLikesCount((prev) => prev + 1);
+    }
+    setReactionCounts((prev) => {
+      const next = { ...prev };
+      if (prevReaction && next[prevReaction] && next[prevReaction] > 0) {
+        next[prevReaction] -= 1;
+        if (next[prevReaction] <= 0) delete next[prevReaction];
+      }
+      next[reaction] = (next[reaction] || 0) + 1;
+      return next;
+    });
+
+    reactToPost(reel.id, user.uid, reel.authorId, profile, reaction, reel.tags || []);
+  };
+
+  const handleToggleLike = () => {
+    if (activeReaction) {
+      applyReaction(activeReaction);
+    } else {
+      applyReaction('heart');
     }
   };
 
-  const handleFollow = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!user || !profile || isOwn) return;
-    if (isFollowing) {
-      await unfollowUser(user.uid, reel.authorId);
-    } else {
-      await followUser(user.uid, reel.authorId, profile);
+  const handleSelectReaction = (reaction: ReactionType) => {
+    if (activeReaction !== reaction) {
+      spawnBurst(REACTION_MAP[reaction].emoji);
     }
+    applyReaction(reaction);
+  };
+
+  const handleCardTap = (e: React.MouseEvent<HTMLDivElement>) => {
+    const now = Date.now();
+    const rect = cardRef.current?.getBoundingClientRect();
+    const x = rect ? ((e.clientX - rect.left) / rect.width) * 100 : 50;
+    const y = rect ? ((e.clientY - rect.top) / rect.height) * 100 : 50;
+
+    if (now - lastTapRef.current < 280) {
+      lastTapRef.current = 0;
+      if (singleTapTimerRef.current) {
+        clearTimeout(singleTapTimerRef.current);
+        singleTapTimerRef.current = null;
+      }
+      const targetReaction = activeReaction || 'heart';
+      spawnBurst(REACTION_MAP[targetReaction].emoji, x, y);
+      applyReaction('heart', { keepExisting: true });
+      return;
+    }
+
+    lastTapRef.current = now;
+    if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
+    singleTapTimerRef.current = setTimeout(() => {
+      singleTapTimerRef.current = null;
+      handleTogglePlay();
+    }, 240);
   };
 
   const handleMessage = async (e: React.MouseEvent) => {
@@ -205,14 +302,35 @@ function ReelCard({
     if (convId) onOpenChat(convId);
   };
 
-  const captionText = isDemo && language !== 'ar' && reel.captionEn ? reel.captionEn : reel.caption;
+  const handleToggleSave = async () => {
+    if (!user || !reel?.id) return;
+    const nextSaved = !isSaved;
+    setIsSaved(nextSaved);
+    if (nextSaved) {
+      await savePost(user.uid, { ...reel, likesCount });
+      showReelToast(language === 'ar' ? 'تم حفظ الريلز في محفوظاتك' : 'Saved to your bookmarks');
+    } else {
+      await unsavePost(user.uid, reel.id);
+      showReelToast(language === 'ar' ? 'تمت إزالة الريلز من المحفوظات' : 'Removed from bookmarks');
+    }
+  };
+
+  const handleShareReel = async () => {
+    const result = await sharePostContent(reel, language);
+    if (result === 'copied') {
+      showReelToast(language === 'ar' ? 'تم نسخ رابط الريلز!' : 'Reel link copied!');
+    }
+  };
+
+  const captionText = reel.caption;
 
   return (
     <div
       ref={cardRef}
-      onClick={handleTogglePlay}
+      onClick={handleCardTap}
       className="relative w-full h-full snap-start shrink-0 bg-black rounded-2xl overflow-hidden cursor-pointer select-none"
     >
+      <TapBurstOverlay bursts={bursts} />
       <video
         ref={videoRef}
         src={reel.mediaURL}
@@ -224,6 +342,16 @@ function ReelCard({
         onPause={() => setIsPlaying(false)}
         className="w-full h-full object-cover"
       />
+
+      {/* Toast Feedback */}
+      {reelToast && (
+        <div className="absolute top-16 inset-x-4 flex justify-center pointer-events-none z-30">
+          <div className="px-3.5 py-2 rounded-full bg-black/75 backdrop-blur-md text-white text-xs font-semibold flex items-center gap-1.5 border border-white/15 shadow-lg">
+            <Check size={14} className="text-emerald-400" />
+            <span>{reelToast}</span>
+          </div>
+        </div>
+      )}
 
       {/* Play indicator when paused */}
       {!isPlaying && (
@@ -261,29 +389,17 @@ function ReelCard({
               className="flex items-center gap-2 hover:opacity-90"
             >
               <div className="w-9 h-9 rounded-full overflow-hidden border-2 border-white/80 bg-slate-800 shrink-0">
-                <img
-                  src={reel.authorPhotoURL || '/placeholder-avatar.jpg'}
-                  alt={reel.authorUsername || ''}
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
+                <UserAvatar
+                  src={reel.authorPhotoURL}
+                  username={reel.authorUsername}
+                  iconSize={16}
                 />
               </div>
               <span className="font-bold text-sm drop-shadow">@{reel.authorUsername}</span>
             </button>
 
             {!isOwn && (
-              <button
-                type="button"
-                onClick={handleFollow}
-                className={`px-3 py-1 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 whitespace-nowrap ${
-                  isFollowing
-                    ? 'bg-white/20 text-white border border-white/25'
-                    : 'bg-white text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                {isFollowing ? <UserCheck size={13} /> : <UserPlus size={13} />}
-                <span>{isFollowing ? t('following') : t('follow')}</span>
-              </button>
+              <FollowButton targetUserId={reel.authorId} variant="overlay" />
             )}
           </div>
 
@@ -296,23 +412,18 @@ function ReelCard({
 
         {/* Vertical Action Rail */}
         <div
-          className="flex flex-col items-center gap-3.5 text-white shrink-0 pointer-events-auto"
+          className="flex flex-col items-center gap-3 text-white shrink-0 pointer-events-auto"
           onClick={(e) => e.stopPropagation()}
         >
-          <button
-            type="button"
-            onClick={handleLike}
-            className="flex flex-col items-center gap-1 min-w-[44px]"
-            aria-label={t('likes')}
-          >
-            <div className="w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 backdrop-blur-md flex items-center justify-center border border-white/10 active:scale-90 transition-transform">
-              <Heart
-                size={22}
-                className={`${likeAnimating ? 'animate-heart-pop' : ''} ${liked ? 'text-rose-500 fill-rose-500' : 'text-white'}`}
-              />
-            </div>
-            <span className="text-[11px] font-bold tabular-nums drop-shadow">{likesCount}</span>
-          </button>
+          <ReactionControl
+            activeReaction={activeReaction}
+            likesCount={likesCount}
+            reactionCounts={reactionCounts}
+            language={language}
+            onToggleLike={handleToggleLike}
+            onSelectReaction={handleSelectReaction}
+            variant="reel"
+          />
 
           <button
             type="button"
@@ -326,12 +437,43 @@ function ReelCard({
             <span className="text-[11px] font-bold tabular-nums drop-shadow">{reel.commentsCount || 0}</span>
           </button>
 
+          <button
+            type="button"
+            onClick={handleToggleSave}
+            className="flex flex-col items-center gap-1 min-w-[44px]"
+            aria-label={isSaved ? (language === 'ar' ? 'إزالة من المحفوظات' : 'Remove bookmark') : (language === 'ar' ? 'حفظ' : 'Save')}
+            title={isSaved ? (language === 'ar' ? 'إزالة من المحفوظات' : 'Remove bookmark') : (language === 'ar' ? 'حفظ' : 'Save')}
+          >
+            <div
+              className={`w-11 h-11 rounded-full backdrop-blur-md flex items-center justify-center border active:scale-90 transition-all ${
+                isSaved
+                  ? 'bg-amber-500/90 border-amber-300 text-white'
+                  : 'bg-black/45 hover:bg-black/65 border-white/10 text-white'
+              }`}
+            >
+              <Bookmark size={20} className={isSaved ? 'fill-white' : ''} />
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleShareReel}
+            className="flex flex-col items-center gap-1 min-w-[44px]"
+            aria-label={language === 'ar' ? 'مشاركة' : 'Share'}
+            title={language === 'ar' ? 'مشاركة' : 'Share'}
+          >
+            <div className="w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 backdrop-blur-md flex items-center justify-center border border-white/10 active:scale-90 transition-transform">
+              <Share2 size={20} />
+            </div>
+          </button>
+
           {!isOwn && (
             <button
               type="button"
               onClick={handleMessage}
               className="flex flex-col items-center gap-1 min-w-[44px]"
               aria-label={t('message')}
+              title={t('message')}
             >
               <div className="w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 backdrop-blur-md flex items-center justify-center border border-white/10 active:scale-90 transition-transform">
                 <Send size={20} />
@@ -377,12 +519,12 @@ export default function ReelsView({
           .filter((p: any) => !blockedUsers.includes(p.authorId))
           .sort((a: any, b: any) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
 
-        setReels(list.length > 0 ? list : DEMO_REELS);
+        setReels(list);
         setLoading(false);
       },
       (error) => {
         console.warn('Reels listener notice:', error);
-        setReels(DEMO_REELS);
+        setReels([]);
         setLoading(false);
       }
     );
@@ -393,23 +535,6 @@ export default function ReelsView({
   useEffect(() => {
     if (!activeCommentsReel?.id) {
       setReelComments([]);
-      return;
-    }
-
-    if (activeCommentsReel.id.startsWith('demo-')) {
-      setReelComments([
-        {
-          id: 'demo-reel-comment-1',
-          postId: activeCommentsReel.id,
-          userId: 'user_traveler',
-          username: 'traveler_joy',
-          userPhotoURL: '/src/assets/images/avatar_woman_1794501562592.jpg',
-          text: language === 'ar' ? 'مشهد رائع ومريح جداً! 🌊✨' : 'So relaxing and scenic! 🌊✨',
-          likesCount: 5,
-          isLikedByMe: false,
-          createdAt: { toDate: () => new Date(Date.now() - 1800000) },
-        },
-      ]);
       return;
     }
 
@@ -438,25 +563,6 @@ export default function ReelsView({
   const handleSubmitComment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !profile || !activeCommentsReel || !commentText.trim()) return;
-
-    if (activeCommentsReel.id.startsWith('demo-')) {
-      setReelComments((prev) => [
-        ...prev,
-        {
-          id: `demo-rc-${Date.now()}`,
-          postId: activeCommentsReel.id,
-          userId: user.uid,
-          username: profile.username || 'You',
-          userPhotoURL: profile.photoURL || '',
-          text: commentText.trim(),
-          likesCount: 0,
-          isLikedByMe: false,
-          createdAt: { toDate: () => new Date() },
-        },
-      ]);
-      setCommentText('');
-      return;
-    }
 
     addComment(
       activeCommentsReel.id,
@@ -510,17 +616,43 @@ export default function ReelsView({
           ref={feedContainerRef}
           className="h-[calc(100vh-210px)] md:h-[calc(100vh-175px)] min-h-[460px] w-full overflow-y-auto snap-y snap-mandatory no-scrollbar rounded-3xl space-y-4 shadow-xl bg-black"
         >
-          {reels.map((reel) => (
-            <ReelCard
-              key={reel.id}
-              reel={reel}
-              isMuted={isMuted}
-              onToggleMute={() => setIsMuted((prev) => !prev)}
-              onOpenProfile={onOpenProfile}
-              onOpenChat={onOpenChat}
-              onOpenComments={(r) => setActiveCommentsReel(r)}
-            />
-          ))}
+          {reels.length === 0 ? (
+            <div className="w-full h-full flex flex-col items-center justify-center text-center px-6 space-y-4 bg-gradient-to-b from-slate-900 to-black text-white">
+              <div className="w-16 h-16 rounded-2xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400">
+                <Clapperboard size={32} />
+              </div>
+              <div className="space-y-1.5">
+                <h3 className="text-lg font-bold">
+                  {language === 'ar' ? 'لا توجد مقاطع ريلز بعد' : 'No Reels Yet'}
+                </h3>
+                <p className="text-xs text-slate-300 max-w-xs leading-relaxed">
+                  {language === 'ar'
+                    ? 'كن أول من يشارك مقطع فيديو قصير ومميز مع المجتمع.'
+                    : 'Be the first to share a short video reel with the community.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCreateModal(true)}
+                className="min-h-[42px] px-5 py-2 rounded-xl bg-white text-slate-900 text-xs font-bold flex items-center gap-1.5 hover:bg-slate-100 transition-colors"
+              >
+                <Plus size={16} />
+                <span>{language === 'ar' ? 'نشر أول ريلز' : 'Post First Reel'}</span>
+              </button>
+            </div>
+          ) : (
+            reels.map((reel) => (
+              <ReelCard
+                key={reel.id}
+                reel={reel}
+                isMuted={isMuted}
+                onToggleMute={() => setIsMuted((prev) => !prev)}
+                onOpenProfile={onOpenProfile}
+                onOpenChat={onOpenChat}
+                onOpenComments={(r) => setActiveCommentsReel(r)}
+              />
+            ))
+          )}
         </div>
 
         {/* Desktop Prev / Next Reel Controls */}
@@ -589,24 +721,6 @@ export default function ReelsView({
                       setActiveCommentsReel(null);
                       onOpenProfile(uid);
                     }}
-                    onDemoToggleLike={
-                      activeCommentsReel.id.startsWith('demo-')
-                        ? (cid) =>
-                            setReelComments((prev) =>
-                              prev.map((item) =>
-                                item.id === cid
-                                  ? {
-                                      ...item,
-                                      isLikedByMe: !item.isLikedByMe,
-                                      likesCount: !item.isLikedByMe
-                                        ? (item.likesCount || 0) + 1
-                                        : Math.max(0, (item.likesCount || 0) - 1),
-                                    }
-                                  : item
-                              )
-                            )
-                        : undefined
-                    }
                   />
                 ))
               )}

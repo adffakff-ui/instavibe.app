@@ -26,6 +26,12 @@ export const translations = {
     post: 'Post',
     following: 'Following',
     follow: 'Follow',
+    followBack: 'Follow Back',
+    followsYou: 'Follows you',
+    mutual: 'Mutual',
+    unfollow: 'Unfollow',
+    removeFollower: 'Remove',
+    suggestedForYou: 'Suggested for you',
     message: 'Message',
   },
   ar: {
@@ -48,8 +54,14 @@ export const translations = {
     likes: 'إعجابات',
     comments: 'تعليقات',
     post: 'نشر',
-    following: 'تتابع',
+    following: 'تتابعه',
     follow: 'متابعة',
+    followBack: 'ردّ المتابعة',
+    followsYou: 'يتابعك',
+    mutual: 'متابعة متبادلة',
+    unfollow: 'إلغاء المتابعة',
+    removeFollower: 'إزالة',
+    suggestedForYou: 'مقترحون لك',
     message: 'مراسلة',
   }
 };
@@ -58,6 +70,7 @@ interface AuthContextType {
   user: User | null;
   profile: any | null;
   following: string[];
+  followers: string[];
   blockedUsers: string[];
   loading: boolean;
   language: 'en' | 'ar';
@@ -75,10 +88,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
   const [following, setFollowing] = useState<string[]>([]);
+  const [followers, setFollowers] = useState<string[]>([]);
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [language, setLanguageState] = useState<'en' | 'ar'>(() => {
-    return (localStorage.getItem('instavibe_lang') as 'en' | 'ar') || 'ar'; // Default to Arabic for great Arabic support
+    return (localStorage.getItem('instavibe_lang') as 'en' | 'ar') || 'ar';
   });
   const [theme, setThemeState] = useState<'light' | 'dark' | 'system'>(() => {
     const saved = localStorage.getItem('instavibe_theme');
@@ -124,12 +138,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let unsubscribeProfile: (() => void) | undefined;
     let unsubscribeFollowing: (() => void) | undefined;
+    let unsubscribeFollowers: (() => void) | undefined;
     let unsubscribeBlocked: (() => void) | undefined;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setUser(user);
       if (unsubscribeProfile) unsubscribeProfile();
       if (unsubscribeFollowing) unsubscribeFollowing();
+      if (unsubscribeFollowers) unsubscribeFollowers();
       if (unsubscribeBlocked) unsubscribeBlocked();
 
       if (user) {
@@ -162,7 +178,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             (err) => console.warn('Profile listener notice:', err)
           );
 
-          // Following list logic
+          // Following list real-time listener
           const qFollowing = query(collection(db, 'users', user.uid, 'following'));
           unsubscribeFollowing = onSnapshot(
             qFollowing,
@@ -172,7 +188,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             (err) => console.warn('Following listener notice:', err)
           );
 
-          // Blocked list logic
+          // Followers list real-time listener
+          const qFollowers = query(collection(db, 'users', user.uid, 'followers'));
+          unsubscribeFollowers = onSnapshot(
+            qFollowers,
+            (snapshot) => {
+              setFollowers(snapshot.docs.map(doc => doc.id));
+            },
+            (err) => console.warn('Followers listener notice:', err)
+          );
+
+          // Blocked list real-time listener
           const qBlocked = query(collection(db, 'users', user.uid, 'blockedUsers'));
           unsubscribeBlocked = onSnapshot(
             qBlocked,
@@ -187,6 +213,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         setProfile(null);
         setFollowing([]);
+        setFollowers([]);
         setBlockedUsers([]);
       }
       setLoading(false);
@@ -196,6 +223,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       unsubscribeAuth();
       if (unsubscribeProfile) unsubscribeProfile();
       if (unsubscribeFollowing) unsubscribeFollowing();
+      if (unsubscribeFollowers) unsubscribeFollowers();
       if (unsubscribeBlocked) unsubscribeBlocked();
     };
   }, []);
@@ -210,7 +238,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, following, blockedUsers, loading, language, setLanguage, theme, setTheme, t, signIn, logOut }}>
+    <AuthContext.Provider value={{ user, profile, following, followers, blockedUsers, loading, language, setLanguage, theme, setTheme, t, signIn, logOut }}>
       {children}
     </AuthContext.Provider>
   );

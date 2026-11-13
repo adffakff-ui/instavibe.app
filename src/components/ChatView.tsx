@@ -3,20 +3,31 @@ import { collection, query, orderBy, onSnapshot, doc, getDoc } from 'firebase/fi
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
-import { ArrowLeft, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { ArrowLeft, Image as ImageIcon, Loader2, Ban } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
+import ActionConfirmationModal from './ActionConfirmationModal';
+import UserAvatar from './UserAvatar';
 
 export default function ChatView({ conversationId, onBack }: { conversationId: string, onBack: () => void }) {
-  const { user, profile, language } = useAuth();
-  const { sendMessage } = useFirestore();
+  const { user, profile, blockedUsers, language } = useAuth();
+  const { sendMessage, blockUser } = useFirestore();
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
   const [otherUser, setOtherUser] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [sendingMedia, setSendingMedia] = useState(false);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  const [blockingInProgress, setBlockingInProgress] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-exit if the other participant is in blockedUsers
+  useEffect(() => {
+    if (otherUser?.uid && blockedUsers.includes(otherUser.uid)) {
+      onBack();
+    }
+  }, [otherUser, blockedUsers, onBack]);
 
   useEffect(() => {
     if (!conversationId || !user) return;
@@ -48,17 +59,10 @@ export default function ChatView({ conversationId, onBack }: { conversationId: s
             if (userSnap.exists()) {
               setOtherUser(userSnap.data());
             } else {
-              const demoCreators: Record<string, { username: string; photoURL: string }> = {
-                creator_sophia: { username: 'sophia.travels', photoURL: '/src/assets/images/avatar_woman_1794501562592.jpg' },
-                creator_alex: { username: 'alex.roasts', photoURL: '/src/assets/images/avatar_man_1794501560820.jpg' },
-                creator_leo: { username: 'leo_visuals', photoURL: '/src/assets/images/city_night_1794501562076.jpg' },
-                creator_elena: { username: 'elena.lifestyle', photoURL: '/src/assets/images/beach_lifestyle_1794501561335.jpg' },
-              };
-              const fallback = demoCreators[otherId];
               setOtherUser({
                 uid: otherId,
-                username: fallback?.username || (language === 'ar' ? 'مستخدم' : 'User'),
-                photoURL: fallback?.photoURL || '/placeholder-avatar.jpg',
+                username: language === 'ar' ? 'مستخدم' : 'User',
+                photoURL: '',
               });
             }
           }
@@ -140,30 +144,61 @@ export default function ChatView({ conversationId, onBack }: { conversationId: s
   return (
     <div className="flex flex-col h-[calc(100vh-140px)] md:h-[calc(100vh-100px)] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
       {/* Header */}
-      <div className="flex items-center gap-3 p-4 border-b border-slate-100 dark:border-slate-800">
-        <button
-          type="button"
-          onClick={onBack}
-          aria-label={language === 'ar' ? 'رجوع' : 'Back'}
-          className="p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-full transition-colors"
-        >
-          <ArrowLeft size={20} className={language === 'ar' ? 'rotate-180' : ''} />
-        </button>
-        <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-200 shrink-0">
-          <img
-            src={otherUser?.photoURL || '/placeholder-avatar.jpg'}
-            alt={otherUser?.username || ''}
-            className="w-full h-full object-cover"
-            referrerPolicy="no-referrer"
-          />
+      <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-800">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label={language === 'ar' ? 'رجوع' : 'Back'}
+            className="p-2 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-full transition-colors shrink-0"
+          >
+            <ArrowLeft size={20} className={language === 'ar' ? 'rotate-180' : ''} />
+          </button>
+          <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0">
+            <UserAvatar
+              src={otherUser?.photoURL}
+              username={otherUser?.username}
+              iconSize={18}
+            />
+          </div>
+          <div className="min-w-0">
+            <h3 className="font-bold text-sm truncate">{otherUser?.username}</h3>
+            <p className="text-[10px] text-emerald-500 font-medium">
+              {language === 'ar' ? 'نشط الآن' : 'Active Now'}
+            </p>
+          </div>
         </div>
-        <div>
-          <h3 className="font-bold text-sm">{otherUser?.username}</h3>
-          <p className="text-[10px] text-emerald-500 font-medium">
-            {language === 'ar' ? 'نشط الآن' : 'Active Now'}
-          </p>
-        </div>
+
+        {otherUser?.uid && (
+          <button
+            type="button"
+            onClick={() => setShowBlockModal(true)}
+            title={language === 'ar' ? 'حظر المستخدم' : 'Block User'}
+            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-xl transition-colors shrink-0"
+          >
+            <Ban size={18} />
+          </button>
+        )}
       </div>
+
+      <ActionConfirmationModal
+        isOpen={showBlockModal}
+        onClose={() => setShowBlockModal(false)}
+        onConfirm={async () => {
+          if (!user || !otherUser) return;
+          setBlockingInProgress(true);
+          try {
+            await blockUser(user.uid, otherUser.uid);
+            setShowBlockModal(false);
+            onBack();
+          } finally {
+            setBlockingInProgress(false);
+          }
+        }}
+        targetUsername={otherUser?.username}
+        targetPhotoURL={otherUser?.photoURL}
+        isProcessing={blockingInProgress}
+      />
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 no-scrollbar">

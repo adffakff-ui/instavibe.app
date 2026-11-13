@@ -15,9 +15,11 @@ import {
   where,
   getDocs,
   runTransaction,
-  arrayUnion
+  arrayUnion,
+  writeBatch
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
+import { ReactionType, normalizeReaction } from '../utils/reactions';
 
 export enum OperationType {
   CREATE = 'create',
@@ -75,9 +77,9 @@ export function useFirestore() {
     setLoading(true);
     try {
       const cleanCaption = caption.slice(0, 2200);
-      // Simple tag extraction from caption
+      // Extract English and Arabic/Unicode hashtags cleanly
       const tags = Array.from(
-        new Set(cleanCaption.match(/#[a-z0-9_]+/gi)?.map(t => t.slice(1).toLowerCase()) || [])
+        new Set(cleanCaption.match(/#[\p{L}\p{N}_]+/giu)?.map(t => t.slice(1).toLowerCase()) || [])
       ).slice(0, 30);
 
       await addDoc(collection(db, 'posts'), {
@@ -89,6 +91,7 @@ export function useFirestore() {
         caption: cleanCaption,
         tags,
         likesCount: 0,
+        reactionCounts: {},
         commentsCount: 0,
         createdAt: serverTimestamp(),
       });
@@ -96,6 +99,44 @@ export function useFirestore() {
       handleFirestoreError(error, OperationType.CREATE, 'posts');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const deletePost = async (postId: string) => {
+    try {
+      await deleteDoc(doc(db, 'posts', postId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `posts/${postId}`, true);
+    }
+  };
+
+  const savePost = async (userId: string, post: any) => {
+    if (!userId || !post?.id) return;
+    try {
+      await setDoc(doc(db, 'users', userId, 'savedPosts', post.id), {
+        userId,
+        postId: post.id,
+        authorId: post.authorId || '',
+        authorUsername: (post.authorUsername || 'user').slice(0, 50),
+        authorPhotoURL: (post.authorPhotoURL || '').slice(0, 900000),
+        mediaURL: (post.mediaURL || '').slice(0, 1000),
+        mediaType: post.mediaType === 'video' ? 'video' : 'image',
+        caption: (post.caption || '').slice(0, 2200),
+        likesCount: typeof post.likesCount === 'number' ? Math.max(0, post.likesCount) : 0,
+        commentsCount: typeof post.commentsCount === 'number' ? Math.max(0, post.commentsCount) : 0,
+        savedAt: serverTimestamp(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/savedPosts/${post.id}`);
+    }
+  };
+
+  const unsavePost = async (userId: string, postId: string) => {
+    if (!userId || !postId) return;
+    try {
+      await deleteDoc(doc(db, 'users', userId, 'savedPosts', postId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `users/${userId}/savedPosts/${postId}`);
     }
   };
 
@@ -118,45 +159,141 @@ export function useFirestore() {
     }
   };
 
-  const likePost = async (postId: string, userId: string, postAuthorId: string, sender: any, postTags: string[] = []) => {
+  const reactToPost = async (
+    postId: string,
+    userId: string,
+    postAuthorId: string,
+    sender: any,
+    reaction: ReactionType = 'heart',
+    postTags: string[] = []
+  ) => {
     try {
       const likeRef = doc(db, 'posts', postId, 'likes', userId);
-      await setDoc(likeRef, {
-        postId,
-        userId,
-        createdAt: serverTimestamp(),
-      });
-      await updateDoc(doc(db, 'posts', postId), {
-        likesCount: increment(1),
+      const postRef = doc(db, 'posts', postId);
+
+      const result = await runTransaction(db, async (transaction) => {
+        const [likeSnap, postSnap] = await Promise.all([
+          transaction.get(likeRef),
+          transaction.get(postRef),
+        ]);
+
+        const postData = postSnap.exists() ? postSnap.data() : {};
+        const currentLikesCount = typeof postData.likesCount === 'number' ? postData.likesCount : 0;
+        const nextCounts: Record<string, number> = { ...(postData.reactionCounts || {}) };
+
+        if (!likeSnap.exists()) {
+          nextCounts[reaction] = (nextCounts[reaction] || 0) + 1;
+          transaction.set(likeRef, {
+            postId,
+            userId,
+            username: (sender?.username || 'user').slice(0, 50),
+            userPhotoURL: (sender?.photoURL || '').slice(0, 900000),
+            reaction,
+            createdAt: serverTimestamp(),
+          });
+          if (postSnap.exists()) {
+            transaction.update(postRef, {
+              likesCount: currentLikesCount + 1,
+              reactionCounts: nextCounts,
+            });
+          }
+          return { isNew: true, changed: true };
+        }
+
+        const prevReaction = normalizeReaction(likeSnap.data().reaction, 'heart');
+        if (prevReaction === reaction) {
+          return { isNew: false, changed: false };
+        }
+
+        if (typeof nextCounts[prevReaction] === 'number' && nextCounts[prevReaction] > 0) {
+          const decremented = nextCounts[prevReaction] - 1;
+          if (decremented > 0) {
+            nextCounts[prevReaction] = decremented;
+          } else {
+            delete nextCounts[prevReaction];
+          }
+        }
+        nextCounts[reaction] = (nextCounts[reaction] || 0) + 1;
+
+        transaction.update(likeRef, {
+          username: (sender?.username || 'user').slice(0, 50),
+          userPhotoURL: (sender?.photoURL || '').slice(0, 900000),
+          reaction,
+        });
+        if (postSnap.exists()) {
+          transaction.update(postRef, {
+            reactionCounts: nextCounts,
+          });
+        }
+        return { isNew: false, changed: true };
       });
 
-      // Update user interests
-      if (postTags.length > 0) {
+      if (result.isNew && postTags.length > 0) {
         const userRef = doc(db, 'users', userId);
         const userSnap = await getDoc(userRef);
         if (userSnap.exists()) {
           const currentInterests = userSnap.data().interests || {};
-          postTags.forEach(tag => {
+          postTags.forEach((tag) => {
             currentInterests[tag] = (currentInterests[tag] || 0) + 1;
           });
           await updateDoc(userRef, { interests: currentInterests });
         }
       }
 
-      await sendNotification(postAuthorId, sender, 'like', postId);
+      if (result.changed) {
+        await sendNotification(
+          postAuthorId,
+          sender,
+          'like',
+          postId,
+          `post_reaction:${reaction}`
+        );
+      }
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `posts/${postId}/likes`);
+      handleFirestoreError(error, OperationType.WRITE, `posts/${postId}/likes/${userId}`);
     }
+  };
+
+  const likePost = async (postId: string, userId: string, postAuthorId: string, sender: any, postTags: string[] = []) => {
+    await reactToPost(postId, userId, postAuthorId, sender, 'heart', postTags);
   };
 
   const unlikePost = async (postId: string, userId: string) => {
     try {
-      await deleteDoc(doc(db, 'posts', postId, 'likes', userId));
-      await updateDoc(doc(db, 'posts', postId), {
-        likesCount: increment(-1),
+      const likeRef = doc(db, 'posts', postId, 'likes', userId);
+      const postRef = doc(db, 'posts', postId);
+
+      await runTransaction(db, async (transaction) => {
+        const [likeSnap, postSnap] = await Promise.all([
+          transaction.get(likeRef),
+          transaction.get(postRef),
+        ]);
+
+        if (!likeSnap.exists()) return;
+
+        const prevReaction = normalizeReaction(likeSnap.data().reaction, 'heart');
+        transaction.delete(likeRef);
+
+        if (postSnap.exists()) {
+          const postData = postSnap.data();
+          const currentLikesCount = typeof postData.likesCount === 'number' ? postData.likesCount : 0;
+          const nextCounts: Record<string, number> = { ...(postData.reactionCounts || {}) };
+          if (typeof nextCounts[prevReaction] === 'number' && nextCounts[prevReaction] > 0) {
+            const decremented = nextCounts[prevReaction] - 1;
+            if (decremented > 0) {
+              nextCounts[prevReaction] = decremented;
+            } else {
+              delete nextCounts[prevReaction];
+            }
+          }
+          transaction.update(postRef, {
+            likesCount: Math.max(0, currentLikesCount - 1),
+            reactionCounts: nextCounts,
+          });
+        }
       });
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `posts/${postId}/likes`);
+      handleFirestoreError(error, OperationType.DELETE, `posts/${postId}/likes/${userId}`);
     }
   };
 
@@ -236,32 +373,65 @@ export function useFirestore() {
     }
   };
 
-  const followUser = async (currentUserId: string, targetUserId: string, sender: any) => {
+  const followUser = async (currentUserId: string, targetUserId: string, sender: any): Promise<boolean> => {
+    if (!currentUserId || !targetUserId || currentUserId === targetUserId) return false;
     try {
-      // Add to following subcollection of current user
-      await setDoc(doc(db, 'users', currentUserId, 'following', targetUserId), {
+      const [blockedByMeSnap, blockedByTargetSnap] = await Promise.all([
+        getDoc(doc(db, 'users', currentUserId, 'blockedUsers', targetUserId)),
+        getDoc(doc(db, 'users', targetUserId, 'blockedUsers', currentUserId)),
+      ]);
+      if (blockedByMeSnap.exists() || blockedByTargetSnap.exists()) {
+        return false;
+      }
+
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', currentUserId, 'following', targetUserId), {
         followerId: currentUserId,
         followingId: targetUserId,
         createdAt: serverTimestamp(),
       });
-      // Add to followers subcollection of target user
-      await setDoc(doc(db, 'users', targetUserId, 'followers', currentUserId), {
+      batch.set(doc(db, 'users', targetUserId, 'followers', currentUserId), {
         followerId: currentUserId,
         followingId: targetUserId,
         createdAt: serverTimestamp(),
       });
-      await sendNotification(targetUserId, sender, 'follow');
+      await batch.commit();
+
+      if (sender) {
+        await sendNotification(targetUserId, sender, 'follow');
+      }
+      return true;
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${currentUserId}/following/${targetUserId}`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${currentUserId}/following/${targetUserId}`, true);
+      return false;
     }
   };
 
-  const unfollowUser = async (currentUserId: string, targetUserId: string) => {
+  const unfollowUser = async (currentUserId: string, targetUserId: string): Promise<boolean> => {
+    if (!currentUserId || !targetUserId || currentUserId === targetUserId) return false;
     try {
-      await deleteDoc(doc(db, 'users', currentUserId, 'following', targetUserId));
-      await deleteDoc(doc(db, 'users', targetUserId, 'followers', currentUserId));
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'users', currentUserId, 'following', targetUserId));
+      batch.delete(doc(db, 'users', targetUserId, 'followers', currentUserId));
+      await batch.commit();
+      return true;
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `users/${currentUserId}/following/${targetUserId}`);
+      handleFirestoreError(error, OperationType.DELETE, `users/${currentUserId}/following/${targetUserId}`, true);
+      return false;
+    }
+  };
+
+  const removeFollower = async (currentUserId: string, followerUserId: string): Promise<boolean> => {
+    if (!currentUserId || !followerUserId || currentUserId === followerUserId) return false;
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'users', currentUserId, 'followers', followerUserId));
+      batch.delete(doc(db, 'users', followerUserId, 'following', currentUserId));
+      await batch.commit();
+      return true;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `users/${currentUserId}/followers/${followerUserId}`, true);
+      return false;
     }
   };
 
@@ -326,17 +496,40 @@ export function useFirestore() {
   };
 
   const blockUser = async (currentUserId: string, targetUserId: string) => {
+    if (!currentUserId || !targetUserId || currentUserId === targetUserId) return;
     try {
-      await setDoc(doc(db, 'users', currentUserId, 'blockedUsers', targetUserId), {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'users', currentUserId, 'blockedUsers', targetUserId), {
         blockerId: currentUserId,
         blockedId: targetUserId,
         createdAt: serverTimestamp(),
       });
-      // Also unfollow automatically
-      await deleteDoc(doc(db, 'users', currentUserId, 'following', targetUserId));
-      await deleteDoc(doc(db, 'users', targetUserId, 'followers', currentUserId));
+      // Sever both follow directions atomically
+      batch.delete(doc(db, 'users', currentUserId, 'following', targetUserId));
+      batch.delete(doc(db, 'users', targetUserId, 'followers', currentUserId));
+      batch.delete(doc(db, 'users', targetUserId, 'following', currentUserId));
+      batch.delete(doc(db, 'users', currentUserId, 'followers', targetUserId));
+      await batch.commit();
+
+      // Remove from any active direct messaging conversation
+      const participantIds = [currentUserId, targetUserId].sort();
+      const conversationId = participantIds.join('_');
+      const convRef = doc(db, 'conversations', conversationId);
+      const convSnap = await getDoc(convRef);
+      if (convSnap.exists()) {
+        await deleteDoc(convRef);
+      }
+
+      // Dispatch block event for real-time UI synchronization
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('instavibe:user-blocked', {
+            detail: { blockerId: currentUserId, blockedUserId: targetUserId },
+          })
+        );
+      }
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${currentUserId}/blockedUsers/${targetUserId}`);
+      handleFirestoreError(error, OperationType.WRITE, `users/${currentUserId}/blockedUsers/${targetUserId}`, true);
     }
   };
 
@@ -361,6 +554,8 @@ export function useFirestore() {
         mediaURL,
         mediaType,
         caption,
+        likesCount: 0,
+        reactionCounts: {},
         createdAt: serverTimestamp(),
         expiresAt: expiresAt.toISOString(),
       };
@@ -415,6 +610,125 @@ export function useFirestore() {
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `stories/${storyId}`);
+    }
+  };
+
+  const reactToStory = async (
+    storyId: string,
+    userId: string,
+    storyAuthorId: string,
+    sender: any,
+    reaction: ReactionType = 'heart'
+  ) => {
+    try {
+      const reactionRef = doc(db, 'stories', storyId, 'reactions', userId);
+      const storyRef = doc(db, 'stories', storyId);
+
+      const changed = await runTransaction(db, async (transaction) => {
+        const [reactionSnap, storySnap] = await Promise.all([
+          transaction.get(reactionRef),
+          transaction.get(storyRef),
+        ]);
+
+        const storyData = storySnap.exists() ? storySnap.data() : {};
+        const currentLikesCount = typeof storyData.likesCount === 'number' ? storyData.likesCount : 0;
+        const nextCounts: Record<string, number> = { ...(storyData.reactionCounts || {}) };
+
+        if (!reactionSnap.exists()) {
+          nextCounts[reaction] = (nextCounts[reaction] || 0) + 1;
+          transaction.set(reactionRef, {
+            storyId,
+            userId,
+            username: (sender?.username || 'user').slice(0, 50),
+            userPhotoURL: (sender?.photoURL || '').slice(0, 900000),
+            reaction,
+            createdAt: serverTimestamp(),
+          });
+          if (storySnap.exists()) {
+            transaction.update(storyRef, {
+              likesCount: currentLikesCount + 1,
+              reactionCounts: nextCounts,
+            });
+          }
+          return true;
+        }
+
+        const prevReaction = normalizeReaction(reactionSnap.data().reaction, 'heart');
+        if (prevReaction === reaction) {
+          return false;
+        }
+
+        if (typeof nextCounts[prevReaction] === 'number' && nextCounts[prevReaction] > 0) {
+          const decremented = nextCounts[prevReaction] - 1;
+          if (decremented > 0) {
+            nextCounts[prevReaction] = decremented;
+          } else {
+            delete nextCounts[prevReaction];
+          }
+        }
+        nextCounts[reaction] = (nextCounts[reaction] || 0) + 1;
+
+        transaction.update(reactionRef, {
+          reaction,
+        });
+        if (storySnap.exists()) {
+          transaction.update(storyRef, {
+            reactionCounts: nextCounts,
+          });
+        }
+        return true;
+      });
+
+      if (changed) {
+        await sendNotification(
+          storyAuthorId,
+          sender,
+          'like',
+          undefined,
+          `story_reaction:${reaction}`
+        );
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `stories/${storyId}/reactions/${userId}`);
+    }
+  };
+
+  const removeStoryReaction = async (storyId: string, userId: string) => {
+    try {
+      const reactionRef = doc(db, 'stories', storyId, 'reactions', userId);
+      const storyRef = doc(db, 'stories', storyId);
+
+      await runTransaction(db, async (transaction) => {
+        const [reactionSnap, storySnap] = await Promise.all([
+          transaction.get(reactionRef),
+          transaction.get(storyRef),
+        ]);
+
+        if (!reactionSnap.exists()) return;
+
+        const prevReaction = normalizeReaction(reactionSnap.data().reaction, 'heart');
+        transaction.delete(reactionRef);
+
+        if (storySnap.exists()) {
+          const storyData = storySnap.data();
+          const currentLikesCount = typeof storyData.likesCount === 'number' ? storyData.likesCount : 0;
+          const nextCounts: Record<string, number> = { ...(storyData.reactionCounts || {}) };
+          if (typeof nextCounts[prevReaction] === 'number' && nextCounts[prevReaction] > 0) {
+            const decremented = nextCounts[prevReaction] - 1;
+            if (decremented > 0) {
+              nextCounts[prevReaction] = decremented;
+            } else {
+              delete nextCounts[prevReaction];
+            }
+          }
+          transaction.update(storyRef, {
+            likesCount: Math.max(0, currentLikesCount - 1),
+            reactionCounts: nextCounts,
+          });
+        }
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `stories/${storyId}/reactions/${userId}`);
     }
   };
 
@@ -505,10 +819,11 @@ export function useFirestore() {
   };
 
   return { 
-    createPost, likePost, unlikePost, addComment, likeComment, unlikeComment, 
-    followUser, unfollowUser, getOrCreateConversation, sendMessage, blockUser, 
-    unblockUser, createStory, voteStoryPoll, deleteStory, archiveStory,
-    createHighlightAlbum, updateHighlightAlbum, deleteHighlightAlbum,
-    addStoryToHighlightAlbum, updateUserProfile, loading 
+    createPost, deletePost, savePost, unsavePost,
+    reactToPost, likePost, unlikePost, addComment, likeComment, unlikeComment, 
+    followUser, unfollowUser, removeFollower, getOrCreateConversation, sendMessage, blockUser, 
+    unblockUser, createStory, voteStoryPoll, reactToStory, removeStoryReaction,
+    deleteStory, archiveStory, createHighlightAlbum, updateHighlightAlbum,
+    deleteHighlightAlbum, addStoryToHighlightAlbum, updateUserProfile, loading 
   };
 }

@@ -14,14 +14,24 @@ import { OfflineIndicator, PWAInstallModal } from './components/PWAInstallModal'
 import { usePWAInstall } from './hooks/usePWAInstall';
 import { LogIn, Download, Smartphone } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useBlockedConversationListener } from './hooks/useBlockedConversationListener';
 
 function AppContent() {
-  const { user, loading, signIn, language, setLanguage } = useAuth();
+  const { user, loading, signIn, language, setLanguage, blockedUsers } = useAuth();
   const { isInstalled, isInstallable, install } = usePWAInstall();
   const [view, setView] = useState<'feed' | 'messages' | 'explore' | 'profile' | 'notifications' | 'discover' | 'analytics' | 'reels' | 'live'>('feed');
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
+  const [selectedHashtag, setSelectedHashtag] = useState<string>('all');
   const [showInstallModal, setShowInstallModal] = useState(false);
+
+  // Automatically clears any active selectedConversationId state if the blocked user is a participant
+  useBlockedConversationListener({
+    selectedConversationId,
+    setSelectedConversationId,
+    currentUserId: user?.uid,
+    blockedUsers,
+  });
 
   useEffect(() => {
     const handleOpenInstall = () => setShowInstallModal(true);
@@ -129,6 +139,11 @@ function AppContent() {
     setView(nextView);
   };
 
+  const handleSelectTag = (tag: string) => {
+    setSelectedHashtag(tag);
+    setView('explore');
+  };
+
   return (
     <>
       <Layout
@@ -138,9 +153,18 @@ function AppContent() {
         onOpenInstall={() => setShowInstallModal(true)}
       >
         {view === 'feed' ? (
-          <Feed onOpenChat={handleOpenChat} onOpenProfile={handleOpenProfile} setView={handleSetView} />
+          <Feed
+            onOpenChat={handleOpenChat}
+            onOpenProfile={handleOpenProfile}
+            onSelectTag={handleSelectTag}
+            setView={handleSetView}
+          />
         ) : view === 'explore' ? (
-          <ExploreView onOpenProfile={handleOpenProfile} />
+          <ExploreView
+            onOpenProfile={handleOpenProfile}
+            onOpenChat={handleOpenChat}
+            initialTag={selectedHashtag}
+          />
         ) : view === 'reels' ? (
           <ReelsView onOpenProfile={handleOpenProfile} onOpenChat={handleOpenChat} />
         ) : view === 'live' ? (
@@ -149,13 +173,18 @@ function AppContent() {
           <ProfileView
             userId={selectedProfileId || user.uid}
             onOpenChat={handleOpenChat}
+            onOpenProfile={handleOpenProfile}
+            onSelectTag={handleSelectTag}
+            onNavigateHome={() => setView('feed')}
           />
         ) : view === 'notifications' ? (
-          <NotificationsView />
+          <NotificationsView onOpenProfile={handleOpenProfile} />
         ) : view === 'discover' ? (
           <RecommendationView
             onOpenProfile={handleOpenProfile}
             onOpenChat={handleOpenChat}
+            onSelectTag={handleSelectTag}
+            setView={handleSetView}
           />
         ) : view === 'analytics' ? (
           <AnalyticsDashboard />

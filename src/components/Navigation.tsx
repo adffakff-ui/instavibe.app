@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { usePWAInstall } from '../hooks/usePWAInstall';
 import { query, collection, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import UserAvatar from './UserAvatar';
 
 export default function Navigation({
   currentView,
@@ -203,11 +204,11 @@ export default function Navigation({
             }`}
           >
             <div className="w-9 h-9 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0">
-              <img
-                src={profile?.photoURL || '/placeholder-avatar.jpg'}
+              <UserAvatar
+                src={profile?.photoURL}
+                username={profile?.username}
                 alt="Profile"
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
+                iconSize={16}
               />
             </div>
             <div className="hidden lg:flex flex-col min-w-0">

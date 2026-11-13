@@ -23,6 +23,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import UserAvatar from './UserAvatar';
 
 export type SettingsTab = 'general' | 'profile' | 'privacy';
 
@@ -500,11 +501,11 @@ export default function SettingsModal({
               {/* Avatar Row */}
               <div className="flex items-center gap-4">
                 <div className="w-16 h-16 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 shrink-0">
-                  <img
-                    src={photoURL || '/placeholder-avatar.jpg'}
+                  <UserAvatar
+                    src={photoURL}
+                    username={username}
                     alt={username || 'Avatar'}
-                    className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
+                    iconSize={24}
                   />
                 </div>
                 <div className="flex-1 min-w-0 space-y-1.5">
@@ -649,11 +650,10 @@ export default function SettingsModal({
                       >
                         <div className="flex items-center gap-3 min-w-0">
                           <div className="w-9 h-9 rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800 shrink-0">
-                            <img
-                              src={item.photoURL || '/placeholder-avatar.jpg'}
-                              alt={item.username}
-                              className="w-full h-full object-cover"
-                              referrerPolicy="no-referrer"
+                            <UserAvatar
+                              src={item.photoURL}
+                              username={item.username}
+                              iconSize={16}
                             />
                           </div>
                           <div className="min-w-0">

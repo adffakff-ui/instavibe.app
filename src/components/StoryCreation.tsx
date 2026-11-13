@@ -52,54 +52,6 @@ const FILTER_PRESETS = [
   { id: 'vibrant', name: 'Vibrant Pop', nameAr: 'ألوان حيوية', css: 'saturate(160%) contrast(110%)' },
 ];
 
-const SAMPLE_STORIES = [
-  {
-    title: 'Sunset Sky',
-    titleAr: 'سماء الغروب',
-    type: 'image' as const,
-    url: '/src/assets/images/story_sunset_1794501562415.jpg',
-    caption: 'Golden hour bliss ✨🌅',
-    captionAr: 'جمال لحظات الغروب الذهبية ✨🌅',
-    category: 'Photo'
-  },
-  {
-    title: 'Coffee Moment',
-    titleAr: 'لحظة قهوة',
-    type: 'image' as const,
-    url: '/src/assets/images/story_coffee_1794501561737.jpg',
-    caption: 'Morning brew fuels the soul ☕️🤎',
-    captionAr: 'قهوة الصباح تعدل المزاج ☕️🤎',
-    category: 'Photo'
-  },
-  {
-    title: 'City Lights',
-    titleAr: 'أضواء المدينة',
-    type: 'image' as const,
-    url: '/src/assets/images/city_night_1794501562076.jpg',
-    caption: 'Neon nights in the metropolis 🌃💫',
-    captionAr: 'أجواء المدينة الساحرة ليلاً 🌃💫',
-    category: 'Photo'
-  },
-  {
-    title: 'Beach Waves',
-    titleAr: 'أمواج الشاطئ',
-    type: 'image' as const,
-    url: '/src/assets/images/beach_lifestyle_1794501561335.jpg',
-    caption: 'Salt in the air, sand in my hair 🌊🌴',
-    captionAr: 'نسيم البحر وهدوء الشاطئ 🌊🌴',
-    category: 'Photo'
-  },
-  {
-    title: 'Ocean Swell',
-    titleAr: 'موج البحر',
-    type: 'video' as const,
-    url: 'https://assets.mixkit.co/videos/preview/mixkit-vertical-view-of-waves-on-a-beach-43187-large.mp4',
-    caption: 'Calm ocean tides soothing the mind 🌊🎧',
-    captionAr: 'هدوء الأمواج يريح البال 🌊🎧',
-    category: 'Video Clip'
-  }
-];
-
 const EMOJI_SHORTCUTS = ['🔥', '✨', '🌊', '☕', '❤️', '🎉', '🌴', '💫'];
 
 export default function StoryCreation({ onClose, onSuccess, initialDraftId }: StoryCreationProps) {
@@ -282,8 +234,8 @@ export default function StoryCreation({ onClose, onSuccess, initialDraftId }: St
         if (file.size > 650 * 1024) {
           setErrorMessage(
             language === 'ar'
-              ? `حجم الفيديو (${(file.size / (1024 * 1024)).toFixed(1)} ميجابايت) يتجاوز الحد الأقصى المسموح به (650 كيلوبايت). يرجى اختيار مقطع قصير أو أحد المقاطع الجاهزة.`
-              : `Video file size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 650 KB limit for inline base64 storage. Please upload a short 3-5s clip, or select a sample clip below!`
+              ? `حجم الفيديو (${(file.size / (1024 * 1024)).toFixed(1)} ميجابايت) يتجاوز الحد الأقصى المسموح به (650 كيلوبايت). يرجى اختيار مقطع قصير أو لصق رابط فيديو مباشر.`
+              : `Video file size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 650 KB limit for inline base64 storage. Please upload a short 3-5s clip, or paste a direct video URL below.`
           );
           setIsProcessing(false);
           return;
@@ -344,15 +296,6 @@ export default function StoryCreation({ onClose, onSuccess, initialDraftId }: St
     if (e.target.files && e.target.files.length > 0) {
       handleFile(e.target.files[0]);
     }
-  };
-
-  const handleSelectSample = (sample: typeof SAMPLE_STORIES[0]) => {
-    setErrorMessage(null);
-    setMediaType(sample.type);
-    setRawSourceUrl(sample.url);
-    setPreviewUrl(sample.url);
-    setCaption(language === 'ar' ? sample.captionAr : sample.caption);
-    handleResetFilters();
   };
 
   const handleCustomUrlApply = () => {
@@ -778,11 +721,11 @@ export default function StoryCreation({ onClose, onSuccess, initialDraftId }: St
                   )}
                 </div>
 
-                {/* Sample Inspiration Presets */}
-                <div>
-                  <div className="flex items-center justify-between mb-2.5">
-                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                      {language === 'ar' ? 'أو اختر قصة تجريبية جاهزة' : 'Or select a sample story'}
+                {/* Direct Web URL Input Option */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+                      {language === 'ar' ? 'أو استخدام رابط وسائط مباشر' : 'Or use a direct media URL'}
                     </span>
                     <button
                       type="button"
@@ -796,7 +739,7 @@ export default function StoryCreation({ onClose, onSuccess, initialDraftId }: St
                   </div>
 
                   {showUrlField && (
-                    <div className="flex gap-2 mb-3">
+                    <div className="flex gap-2">
                       <input
                         type="url"
                         placeholder={language === 'ar' ? 'الصق رابط صورة أو فيديو mp4...' : 'Paste image or mp4 video URL...'}
@@ -813,37 +756,6 @@ export default function StoryCreation({ onClose, onSuccess, initialDraftId }: St
                       </button>
                     </div>
                   )}
-
-                  <div className="grid grid-cols-5 gap-2">
-                    {SAMPLE_STORIES.map((sample, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => handleSelectSample(sample)}
-                        className="group relative flex flex-col items-center p-1 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800/80 transition-all text-start"
-                      >
-                        <div className="w-full aspect-[9/16] rounded-lg overflow-hidden bg-slate-200 dark:bg-slate-800 relative ring-1 ring-slate-200 dark:ring-slate-700 group-hover:ring-purple-500 transition-all">
-                          {sample.type === 'video' ? (
-                            <div className="w-full h-full bg-slate-800 flex items-center justify-center text-white relative">
-                              <Film size={18} className="text-purple-400" />
-                              <span className="absolute bottom-1 end-1 text-[8px] bg-black/70 px-1 rounded text-white font-mono">
-                                VID
-                              </span>
-                            </div>
-                          ) : (
-                            <img 
-                              src={sample.url} 
-                              alt={language === 'ar' ? sample.titleAr : sample.title} 
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" 
-                            />
-                          )}
-                        </div>
-                        <span className="text-[10px] font-medium text-slate-700 dark:text-slate-300 mt-1 truncate w-full text-center">
-                          {language === 'ar' ? sample.titleAr : sample.title}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
                 </div>
               </div>
             ) : (

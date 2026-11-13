@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, getDocs, doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, onSnapshot, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
@@ -9,8 +9,6 @@ import {
   Bookmark,
   Tag,
   Loader2,
-  UserPlus,
-  UserCheck,
   MessageSquare,
   Plus,
   Sparkles,
@@ -22,11 +20,19 @@ import {
   Clock,
   CheckCircle2,
   Calendar,
+  Film,
+  Search,
+  UserMinus,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import StoryViewer, { StoryItem } from './StoryViewer';
 import SettingsModal, { SettingsTab } from './SettingsModal';
+import { ProfileSkeleton } from './SkeletonLoaders';
+import ActionConfirmationModal from './ActionConfirmationModal';
+import UserAvatar from './UserAvatar';
+import PostDetailModal from './PostDetailModal';
+import FollowButton from './FollowButton';
 
 function getTimestampMs(createdAt: any): number {
   if (!createdAt) return 0;
@@ -49,11 +55,22 @@ function getStoryExpiryMs(story: any): number {
   return createdMs > 0 ? createdMs + 24 * 60 * 60 * 1000 : Date.now() + 24 * 60 * 60 * 1000;
 }
 
-export default function ProfileView({ userId, onOpenChat }: { userId: string; onOpenChat?: (convId: string) => void }) {
-  const { user: currentUser, profile: currentProfile, following, blockedUsers, language } = useAuth();
+export default function ProfileView({
+  userId,
+  onOpenChat,
+  onNavigateHome,
+  onOpenProfile,
+  onSelectTag,
+}: {
+  userId: string;
+  onOpenChat?: (convId: string) => void;
+  onNavigateHome?: () => void;
+  onOpenProfile?: (uid: string) => void;
+  onSelectTag?: (tag: string) => void;
+}) {
+  const { user: currentUser, profile: currentProfile, followers, following, blockedUsers, language, t } = useAuth();
   const {
-    followUser,
-    unfollowUser,
+    removeFollower,
     getOrCreateConversation,
     blockUser,
     unblockUser,
@@ -74,6 +91,8 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
   const [followingCount, setFollowingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [isBlockedByTarget, setIsBlockedByTarget] = useState(false);
+  const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false);
+  const [blockingInProgress, setBlockingInProgress] = useState(false);
 
   // Highlight creation modal state
   const [showNewHighlightModal, setShowNewHighlightModal] = useState(false);
@@ -100,8 +119,19 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
   const [profileTab, setProfileTab] = useState<'posts' | 'saved' | 'tagged' | 'archives'>('posts');
 
+  // Saved, Tagged, Post Detail & Followers/Following modal states
+  const [savedPosts, setSavedPosts] = useState<any[]>([]);
+  const [taggedPosts, setTaggedPosts] = useState<any[]>([]);
+  const [loadingTagged, setLoadingTagged] = useState(false);
+  const [selectedPost, setSelectedPost] = useState<any | null>(null);
+  const [followListType, setFollowListType] = useState<'followers' | 'following' | null>(null);
+  const [followListUsers, setFollowListUsers] = useState<any[]>([]);
+  const [loadingFollowList, setLoadingFollowList] = useState(false);
+  const [followListSearch, setFollowListSearch] = useState('');
+  const [removingFollowerId, setRemovingFollowerId] = useState<string | null>(null);
+
   const isOwnProfile = currentUser?.uid === userId;
-  const isFollowing = following.includes(userId);
+  const followsMe = followers.includes(userId) && !following.includes(userId);
   const hasBlocked = blockedUsers.includes(userId);
 
   const showToast = (msg: string) => {
@@ -134,17 +164,13 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
         const userSnap = await getDoc(doc(db, 'users', userId));
         if (userSnap.exists()) {
           setProfile(userSnap.data());
+        } else {
+          setProfile(null);
         }
 
         const postsQ = query(collection(db, 'posts'), where('authorId', '==', userId));
         const postsSnap = await getDocs(postsQ);
         setPosts(postsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
-
-        const followersSnap = await getDocs(collection(db, 'users', userId, 'followers'));
-        setFollowersCount(followersSnap.size);
-
-        const followingSnap = await getDocs(collection(db, 'users', userId, 'following'));
-        setFollowingCount(followingSnap.size);
       } catch (error) {
         console.error('Error fetching profile data:', error);
       } finally {
@@ -153,6 +179,28 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
     };
 
     fetchData();
+  }, [userId, currentUser]);
+
+  // Real-time listeners for Followers & Following counts on this profile
+  useEffect(() => {
+    if (!userId || !currentUser) return;
+
+    const unsubFollowers = onSnapshot(
+      collection(db, 'users', userId, 'followers'),
+      (snap) => setFollowersCount(snap.size),
+      (err) => console.warn('Profile followers count listener notice:', err)
+    );
+
+    const unsubFollowing = onSnapshot(
+      collection(db, 'users', userId, 'following'),
+      (snap) => setFollowingCount(snap.size),
+      (err) => console.warn('Profile following count listener notice:', err)
+    );
+
+    return () => {
+      unsubFollowers();
+      unsubFollowing();
+    };
   }, [userId, currentUser]);
 
   // Real-time listener for user highlights
@@ -230,28 +278,154 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
     return { archivedStories: expired, activeStories: active };
   }, [myStories, nowTick]);
 
+  // Real-time listener for Saved posts (own profile only)
+  useEffect(() => {
+    if (!isOwnProfile || !currentUser?.uid) {
+      setSavedPosts([]);
+      return;
+    }
+
+    const unsub = onSnapshot(
+      collection(db, 'users', currentUser.uid, 'savedPosts'),
+      (snap) => {
+        const items = snap.docs
+          .map((d) => ({
+            id: d.data().postId || d.id,
+            ...d.data(),
+          }))
+          .sort((a: any, b: any) => getTimestampMs(b.savedAt) - getTimestampMs(a.savedAt));
+        setSavedPosts(items);
+      },
+      () => setSavedPosts([])
+    );
+
+    return unsub;
+  }, [isOwnProfile, currentUser?.uid]);
+
+  // Load posts mentioning @username when Tagged tab is opened
+  useEffect(() => {
+    if (profileTab !== 'tagged' || !profile?.username) return;
+    let cancelled = false;
+    const fetchTagged = async () => {
+      setLoadingTagged(true);
+      try {
+        const snap = await getDocs(query(collection(db, 'posts'), limit(60)));
+        const mentionNeedle = `@${profile.username}`.toLowerCase();
+        const matches = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((p: any) => !blockedUsers.includes(p.authorId))
+          .filter((p: any) => (p.caption || '').toLowerCase().includes(mentionNeedle))
+          .sort((a: any, b: any) => getTimestampMs(b.createdAt) - getTimestampMs(a.createdAt));
+        if (!cancelled) setTaggedPosts(matches);
+      } catch (err) {
+        console.warn('Tagged posts fetch notice:', err);
+        if (!cancelled) setTaggedPosts([]);
+      } finally {
+        if (!cancelled) setLoadingTagged(false);
+      }
+    };
+    fetchTagged();
+    return () => {
+      cancelled = true;
+    };
+  }, [profileTab, profile?.username, blockedUsers]);
+
+  // Real-time Followers / Following user list modal when opened
+  useEffect(() => {
+    if (!followListType || !userId || !currentUser) return;
+    setLoadingFollowList(true);
+    let cancelled = false;
+
+    const unsub = onSnapshot(
+      collection(db, 'users', userId, followListType),
+      async (snap) => {
+        const ids = snap.docs.map((d) => d.id);
+        const resolved = await Promise.all(
+          ids.map(async (uid) => {
+            try {
+              const uSnap = await getDoc(doc(db, 'users', uid));
+              if (uSnap.exists()) return { uid, ...uSnap.data() };
+            } catch {
+              // ignore individual lookup error
+            }
+            return { uid, username: uid.slice(0, 12), fullName: '', photoURL: '' };
+          })
+        );
+        if (!cancelled) {
+          setFollowListUsers(resolved);
+          setLoadingFollowList(false);
+        }
+      },
+      (err) => {
+        console.warn('Follow list error:', err);
+        if (!cancelled) {
+          setFollowListUsers([]);
+          setLoadingFollowList(false);
+        }
+      }
+    );
+
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [followListType, userId, currentUser]);
+
+  const filteredFollowListUsers = useMemo(() => {
+    const q = followListSearch.trim().toLowerCase();
+    return followListUsers
+      .filter((u) => !blockedUsers.includes(u.uid))
+      .filter((u) => {
+        if (!q) return true;
+        return (
+          (u.username || '').toLowerCase().includes(q) ||
+          (u.fullName || '').toLowerCase().includes(q)
+        );
+      });
+  }, [followListUsers, followListSearch, blockedUsers]);
+
   const filteredArchivedStories = useMemo(() => {
     if (archiveFilter === 'all') return archivedStories;
     return archivedStories.filter((s) => (s.mediaType || 'image') === archiveFilter);
   }, [archivedStories, archiveFilter]);
 
-  const handleFollow = async () => {
-    if (!currentUser || isOwnProfile || hasBlocked) return;
-    if (isFollowing) {
-      await unfollowUser(currentUser.uid, userId);
-      setFollowersCount((prev) => prev - 1);
-    } else {
-      await followUser(currentUser.uid, userId, currentProfile);
-      setFollowersCount((prev) => prev + 1);
+  const handleRemoveFollower = async (followerUid: string) => {
+    if (!currentUser || !isOwnProfile || removingFollowerId) return;
+    setRemovingFollowerId(followerUid);
+    try {
+      await removeFollower(currentUser.uid, followerUid);
+    } catch (err) {
+      console.error('Failed to remove follower:', err);
+    } finally {
+      setRemovingFollowerId(null);
     }
   };
 
-  const handleBlock = async () => {
+  const handleBlockClick = () => {
     if (!currentUser || isOwnProfile) return;
     if (hasBlocked) {
-      await unblockUser(currentUser.uid, userId);
+      unblockUser(currentUser.uid, userId).then(() => {
+        showToast(language === 'ar' ? 'تم إلغاء الحظر بنجاح' : 'User unblocked successfully');
+      });
     } else {
+      setShowBlockConfirmModal(true);
+    }
+  };
+
+  const handleConfirmBlock = async () => {
+    if (!currentUser || isOwnProfile) return;
+    setBlockingInProgress(true);
+    try {
       await blockUser(currentUser.uid, userId);
+      setShowBlockConfirmModal(false);
+      showToast(language === 'ar' ? 'تم حظر المستخدم وإزالته من المحادثات' : 'User blocked and removed from conversations');
+      if (onNavigateHome) {
+        onNavigateHome();
+      }
+    } catch (err) {
+      console.error('Failed to block user:', err);
+    } finally {
+      setBlockingInProgress(false);
     }
   };
 
@@ -269,7 +443,7 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
 
     setCreatingHighlight(true);
     try {
-      const coverURL = newHighlightCover.trim() || posts[0]?.mediaURL || profile?.photoURL || '/placeholder-avatar.jpg';
+      const coverURL = newHighlightCover.trim() || posts[0]?.mediaURL || profile?.photoURL || '';
       await createHighlightAlbum(currentUser.uid, newHighlightTitle.trim(), coverURL, []);
       setNewHighlightTitle('');
       setNewHighlightCover('');
@@ -303,7 +477,7 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
       const coverURL =
         highlightTargetStory.mediaType !== 'video'
           ? highlightTargetStory.mediaURL
-          : profile?.photoURL || '/placeholder-avatar.jpg';
+          : profile?.photoURL || '';
       await createHighlightAlbum(currentUser.uid, newHighlightFromArchiveTitle.trim(), coverURL, [
         highlightTargetStory.id,
       ]);
@@ -367,17 +541,11 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
     try {
       const storyIds: string[] = album.storyIds || [];
       if (storyIds.length === 0) {
-        const demoStories: StoryItem[] = posts.slice(0, 5).map((p) => ({
-          id: `highlight-post-${p.id}`,
-          authorId: userId,
-          authorUsername: profile.username,
-          authorPhotoURL: profile.photoURL,
-          mediaURL: p.mediaURL,
-          mediaType: p.mediaType || 'image',
-          caption: p.caption || album.title,
-          createdAt: p.createdAt,
-        }));
-        setSelectedHighlightStories(demoStories);
+        showToast(
+          language === 'ar'
+            ? 'هذا الألبوم فارغ. أضف قصصاً من الأرشيف لعرضها هنا.'
+            : 'This highlight album is empty. Add stories from your archive.'
+        );
         return;
       }
 
@@ -392,17 +560,11 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
       if (fetchedStories.length > 0) {
         setSelectedHighlightStories(fetchedStories);
       } else {
-        const fallbackStories: StoryItem[] = posts.slice(0, 3).map((p) => ({
-          id: `highlight-fallback-${p.id}`,
-          authorId: userId,
-          authorUsername: profile.username,
-          authorPhotoURL: profile.photoURL,
-          mediaURL: p.mediaURL,
-          mediaType: p.mediaType || 'image',
-          caption: p.caption || album.title,
-          createdAt: p.createdAt,
-        }));
-        setSelectedHighlightStories(fallbackStories);
+        showToast(
+          language === 'ar'
+            ? 'لا توجد قصص متاحة داخل هذا الألبوم.'
+            : 'No available stories found inside this highlight.'
+        );
       }
     } catch (err) {
       console.error('Error opening highlight album:', err);
@@ -410,11 +572,7 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
   };
 
   if (loading) {
-    return (
-      <div className="flex justify-center py-20">
-        <Loader2 className="animate-spin text-slate-400" size={32} />
-      </div>
-    );
+    return <ProfileSkeleton />;
   }
 
   if (isBlockedByTarget) {
@@ -444,19 +602,25 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
     <div className="max-w-screen-md mx-auto pb-20 space-y-6">
       {/* Profile Header */}
       <div className="flex flex-col md:flex-row items-center md:items-start gap-8 px-4 md:px-0">
-        <div className="w-24 h-24 md:w-40 md:h-40 rounded-full overflow-hidden border border-slate-200 shrink-0 bg-slate-100">
-          <img
-            src={profile.photoURL || '/placeholder-avatar.jpg'}
-            alt={profile.username || ''}
-            className="w-full h-full object-cover"
-            referrerPolicy="no-referrer"
+        <div className="w-24 h-24 md:w-40 md:h-40 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100 dark:bg-slate-800">
+          <UserAvatar
+            src={profile.photoURL}
+            username={profile.username}
+            iconSize={40}
           />
         </div>
 
         <div className="flex-1 space-y-4 text-center md:text-start">
           <div className="flex flex-col md:flex-row md:items-center gap-4">
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-white">{profile.username}</h2>
-            <div className="flex items-center justify-center md:justify-start gap-2">
+            <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-white">{profile.username}</h2>
+              {!isOwnProfile && followsMe && (
+                <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
+                  {t('followsYou')}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
               {isOwnProfile ? (
                 <>
                   <button
@@ -485,46 +649,35 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
               ) : (
                 <>
                   {!hasBlocked && (
-                    <button
-                      onClick={handleFollow}
-                      className={`px-6 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
-                        isFollowing
-                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white hover:bg-slate-200'
-                          : 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90'
-                      }`}
-                    >
-                      {isFollowing
-                        ? language === 'ar'
-                          ? 'تتابعه'
-                          : 'Following'
-                        : language === 'ar'
-                        ? 'متابعة'
-                        : 'Follow'}
-                    </button>
+                    <FollowButton targetUserId={userId} variant="primary" />
                   )}
                   {!hasBlocked && (
                     <button
+                      type="button"
                       onClick={handleMessage}
-                      className="px-6 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-sm font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                      className="min-h-[40px] px-5 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-sm font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
                     >
                       {language === 'ar' ? 'مراسلة' : 'Message'}
                     </button>
                   )}
                   <button
-                    onClick={handleBlock}
-                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-colors ${
+                    type="button"
+                    onClick={handleBlockClick}
+                    className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm ${
                       hasBlocked
-                        ? 'bg-red-500 text-white hover:bg-red-600'
-                        : 'bg-slate-100 dark:bg-slate-800 text-red-500 hover:bg-red-50'
+                        ? 'bg-red-600 text-white hover:bg-red-700'
+                        : 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/60 hover:bg-red-100 dark:hover:bg-red-950/70'
                     }`}
                   >
-                    {hasBlocked
-                      ? language === 'ar'
-                        ? 'إلغاء الحظر'
-                        : 'Unblock'
-                      : language === 'ar'
-                      ? 'حظر'
-                      : 'Block'}
+                    <span>
+                      {hasBlocked
+                        ? language === 'ar'
+                          ? 'إلغاء الحظر'
+                          : 'Unblock User'
+                        : language === 'ar'
+                        ? '🚫 حظر المستخدم'
+                        : '🚫 Block User'}
+                    </span>
                   </button>
                 </>
               )}
@@ -536,14 +689,28 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
               <span className="font-bold">{posts.length}</span>{' '}
               {language === 'ar' ? 'منشورات' : 'posts'}
             </div>
-            <div className="text-sm cursor-pointer hover:opacity-70">
+            <button
+              type="button"
+              onClick={() => {
+                setFollowListSearch('');
+                setFollowListType('followers');
+              }}
+              className="text-sm cursor-pointer hover:opacity-70 transition-opacity"
+            >
               <span className="font-bold">{followersCount}</span>{' '}
               {language === 'ar' ? 'متابِع' : 'followers'}
-            </div>
-            <div className="text-sm cursor-pointer hover:opacity-70">
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setFollowListSearch('');
+                setFollowListType('following');
+              }}
+              className="text-sm cursor-pointer hover:opacity-70 transition-opacity"
+            >
               <span className="font-bold">{followingCount}</span>{' '}
               {language === 'ar' ? 'يتابع' : 'following'}
-            </div>
+            </button>
           </div>
 
           <div>
@@ -596,12 +763,11 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
               className="flex flex-col items-center gap-1.5 shrink-0 cursor-pointer group select-none"
             >
               <div className="p-[3px] rounded-full bg-gradient-to-tr from-yellow-400 via-rose-500 to-purple-600 shadow-sm group-hover:scale-105 transition-transform">
-                <div className="w-16 h-16 rounded-full border-2 border-white dark:border-slate-900 overflow-hidden bg-slate-200">
-                  <img
-                    src={album.coverImageURL || '/placeholder-avatar.jpg'}
-                    alt={album.title}
-                    className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
+                <div className="w-16 h-16 rounded-full border-2 border-white dark:border-slate-900 overflow-hidden bg-slate-200 dark:bg-slate-800">
+                  <UserAvatar
+                    src={album.coverImageURL}
+                    username={album.title}
+                    iconSize={20}
                   />
                 </div>
               </div>
@@ -903,18 +1069,88 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
             </div>
           )}
         </div>
-      ) : profileTab !== 'posts' ? (
-        <div className="text-center py-20 bg-slate-50 dark:bg-slate-900/40 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 mx-4 md:mx-0">
-          <p className="text-slate-500 font-medium">
-            {profileTab === 'saved'
-              ? language === 'ar'
-                ? 'لا توجد منشورات محفوظة بعد.'
-                : 'No saved posts yet.'
-              : language === 'ar'
-              ? 'لا توجد منشورات تمت الإشارة إليك فيها.'
-              : 'No tagged posts yet.'}
-          </p>
-        </div>
+      ) : profileTab === 'saved' ? (
+        !isOwnProfile ? (
+          <div className="text-center py-20 bg-slate-50 dark:bg-slate-900/40 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 mx-4 md:mx-0">
+            <p className="text-slate-500 font-medium text-sm">
+              {language === 'ar'
+                ? 'المنشورات المحفوظة خاصة بصاحب الحساب فقط.'
+                : 'Saved posts are private to the account owner.'}
+            </p>
+          </div>
+        ) : savedPosts.length === 0 ? (
+          <div className="text-center py-20 bg-slate-50 dark:bg-slate-900/40 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 mx-4 md:mx-0">
+            <p className="text-slate-500 font-medium">
+              {language === 'ar' ? 'لا توجد منشورات محفوظة بعد.' : 'No saved posts yet.'}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-1 md:gap-4 px-1 md:px-0">
+            {savedPosts.map((post) => (
+              <button
+                key={post.id}
+                type="button"
+                onClick={() => setSelectedPost(post)}
+                className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden relative group cursor-pointer text-start"
+              >
+                {post.mediaType === 'video' ? (
+                  <>
+                    <video src={post.mediaURL} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+                    <div className="absolute top-2 end-2 p-1 rounded-full bg-black/55 text-white">
+                      <Film size={12} />
+                    </div>
+                  </>
+                ) : (
+                  <img src={post.mediaURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                )}
+                <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4 text-white text-xs sm:text-sm font-bold tabular-nums">
+                  <span>❤️ {post.likesCount || 0}</span>
+                  <span>💬 {post.commentsCount || 0}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )
+      ) : profileTab === 'tagged' ? (
+        loadingTagged ? (
+          <div className="flex justify-center py-16">
+            <Loader2 className="animate-spin text-slate-400" size={28} />
+          </div>
+        ) : taggedPosts.length === 0 ? (
+          <div className="text-center py-20 bg-slate-50 dark:bg-slate-900/40 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 mx-4 md:mx-0">
+            <p className="text-slate-500 font-medium">
+              {language === 'ar'
+                ? 'لا توجد منشورات تمت الإشارة إليك فيها.'
+                : 'No tagged posts yet.'}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-1 md:gap-4 px-1 md:px-0">
+            {taggedPosts.map((post) => (
+              <button
+                key={post.id}
+                type="button"
+                onClick={() => setSelectedPost(post)}
+                className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden relative group cursor-pointer text-start"
+              >
+                {post.mediaType === 'video' ? (
+                  <>
+                    <video src={post.mediaURL} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+                    <div className="absolute top-2 end-2 p-1 rounded-full bg-black/55 text-white">
+                      <Film size={12} />
+                    </div>
+                  </>
+                ) : (
+                  <img src={post.mediaURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                )}
+                <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4 text-white text-xs sm:text-sm font-bold tabular-nums">
+                  <span>❤️ {post.likesCount || 0}</span>
+                  <span>💬 {post.commentsCount || 0}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )
       ) : posts.length === 0 ? (
         <div className="text-center py-20 bg-slate-50 dark:bg-slate-900/40 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 mx-4 md:mx-0">
           <p className="text-slate-500 font-medium">
@@ -922,19 +1158,29 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-1 md:gap-4">
+        <div className="grid grid-cols-3 gap-1 md:gap-4 px-1 md:px-0">
           {posts.map((post) => (
-            <div key={post.id} className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden relative group cursor-pointer">
-              <img src={post.mediaURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-              <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-6 text-white">
-                <div className="flex items-center gap-1.5 font-bold tabular-nums">
-                  <span>❤️ {post.likesCount || 0}</span>
-                </div>
-                <div className="flex items-center gap-1.5 font-bold tabular-nums">
-                  <span>💬 {post.commentsCount || 0}</span>
-                </div>
+            <button
+              key={post.id}
+              type="button"
+              onClick={() => setSelectedPost(post)}
+              className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden relative group cursor-pointer text-start"
+            >
+              {post.mediaType === 'video' ? (
+                <>
+                  <video src={post.mediaURL} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+                  <div className="absolute top-2 end-2 p-1 rounded-full bg-black/55 text-white">
+                    <Film size={12} />
+                  </div>
+                </>
+              ) : (
+                <img src={post.mediaURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              )}
+              <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4 text-white text-xs sm:text-sm font-bold tabular-nums">
+                <span>❤️ {post.likesCount || 0}</span>
+                <span>💬 {post.commentsCount || 0}</span>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}
@@ -1052,11 +1298,13 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
                     onClick={() => handleAddArchivedToExistingHighlight(album.id)}
                     className="w-full p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/70 hover:bg-purple-50 dark:hover:bg-purple-950/30 border border-slate-200 dark:border-slate-700 flex items-center gap-3 text-start transition-colors"
                   >
-                    <img
-                      src={album.coverImageURL || '/placeholder-avatar.jpg'}
-                      alt={album.title}
-                      className="w-10 h-10 rounded-full object-cover shrink-0"
-                    />
+                    <div className="w-10 h-10 rounded-full overflow-hidden shrink-0">
+                      <UserAvatar
+                        src={album.coverImageURL}
+                        username={album.title}
+                        iconSize={16}
+                      />
+                    </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
                         {album.title}
@@ -1097,6 +1345,16 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
         </div>
       )}
 
+      {/* REUSABLE ACTION CONFIRMATION MODAL FOR BLOCK */}
+      <ActionConfirmationModal
+        isOpen={showBlockConfirmModal}
+        onClose={() => setShowBlockConfirmModal(false)}
+        onConfirm={handleConfirmBlock}
+        targetUsername={profile?.username}
+        targetPhotoURL={profile?.photoURL}
+        isProcessing={blockingInProgress}
+      />
+
       {/* HIGHLIGHT VIEWER MODAL */}
       {selectedHighlightStories && (
         <StoryViewer
@@ -1136,6 +1394,202 @@ export default function ProfileView({ userId, onOpenChat }: { userId: string; on
             setProfile((prev: any) => (prev ? { ...prev, ...updated } : updated));
           }}
         />
+      )}
+
+      {/* POST DETAIL MODAL */}
+      <PostDetailModal
+        post={selectedPost}
+        onClose={() => setSelectedPost(null)}
+        onOpenChat={onOpenChat}
+        onOpenProfile={onOpenProfile}
+        onSelectTag={onSelectTag}
+        onPostDeleted={(deletedId) => {
+          setPosts((prev) => prev.filter((p) => p.id !== deletedId));
+          setSavedPosts((prev) => prev.filter((p) => p.id !== deletedId));
+          setTaggedPosts((prev) => prev.filter((p) => p.id !== deletedId));
+        }}
+      />
+
+      {/* FOLLOWERS / FOLLOWING INTERACTIVE MANAGER MODAL */}
+      {followListType && (
+        <div
+          className="fixed inset-0 z-[125] bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in"
+          onClick={() => setFollowListType(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="w-full sm:max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-h-[78vh] flex flex-col overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header + Tabs */}
+            <div className="px-5 pt-3.5 pb-2 border-b border-slate-100 dark:border-slate-800 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <h3 className="font-bold text-sm text-slate-900 dark:text-white">
+                  @{profile.username}
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setFollowListType(null)}
+                  aria-label={language === 'ar' ? 'إغلاق' : 'Close'}
+                  className="min-h-[38px] min-w-[38px] flex items-center justify-center rounded-full text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFollowListSearch('');
+                    setFollowListType('followers');
+                  }}
+                  className={`flex-1 py-2 text-xs font-bold rounded-xl transition-colors tabular-nums ${
+                    followListType === 'followers'
+                      ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                      : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {language === 'ar' ? `المتابعون (${followersCount})` : `Followers (${followersCount})`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFollowListSearch('');
+                    setFollowListType('following');
+                  }}
+                  className={`flex-1 py-2 text-xs font-bold rounded-xl transition-colors tabular-nums ${
+                    followListType === 'following'
+                      ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                      : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+                >
+                  {language === 'ar' ? `يتابع (${followingCount})` : `Following (${followingCount})`}
+                </button>
+              </div>
+
+              <div className="relative pb-1">
+                <Search className="absolute start-3 top-2.5 text-slate-400" size={14} />
+                <input
+                  type="text"
+                  value={followListSearch}
+                  onChange={(e) => setFollowListSearch(e.target.value)}
+                  placeholder={language === 'ar' ? 'ابحث باسم المستخدم...' : 'Search users...'}
+                  className="w-full bg-slate-100 dark:bg-slate-800 rounded-xl py-2 ps-9 pe-8 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+                {followListSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setFollowListSearch('')}
+                    className="absolute end-2.5 top-2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800 p-2">
+              {loadingFollowList ? (
+                <div className="py-10 flex justify-center">
+                  <Loader2 size={22} className="animate-spin text-slate-400" />
+                </div>
+              ) : filteredFollowListUsers.length === 0 ? (
+                <p className="py-10 text-center text-xs text-slate-400">
+                  {followListSearch.trim()
+                    ? language === 'ar'
+                      ? 'لا توجد نتائج مطابقة.'
+                      : 'No matching users.'
+                    : followListType === 'followers'
+                    ? language === 'ar'
+                      ? 'لا يوجد متابعون بعد.'
+                      : 'No followers yet.'
+                    : language === 'ar'
+                    ? 'لا يتابع أي حسابات بعد.'
+                    : 'Not following anyone yet.'}
+                </p>
+              ) : (
+                filteredFollowListUsers.map((u) => {
+                  const rowFollowsMe = followers.includes(u.uid) && !following.includes(u.uid);
+                  const isMe = currentUser?.uid === u.uid;
+                  return (
+                    <div
+                      key={u.uid}
+                      className="flex items-center justify-between gap-2.5 p-2.5 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFollowListType(null);
+                          onOpenProfile?.(u.uid);
+                        }}
+                        className="flex items-center gap-3 min-w-0 flex-1 text-start"
+                      >
+                        <div className="w-10 h-10 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0">
+                          <UserAvatar src={u.photoURL} username={u.username} iconSize={16} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                              {u.username}
+                            </p>
+                            {!isMe && rowFollowsMe && (
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 shrink-0">
+                                {t('followsYou')}
+                              </span>
+                            )}
+                          </div>
+                          {u.fullName && (
+                            <p className="text-xs text-slate-500 truncate">{u.fullName}</p>
+                          )}
+                        </div>
+                      </button>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {!isMe && currentUser && onOpenChat && (
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const convId = await getOrCreateConversation(currentUser.uid, u.uid);
+                              if (convId) {
+                                setFollowListType(null);
+                                onOpenChat(convId);
+                              }
+                            }}
+                            aria-label={t('message')}
+                            title={t('message')}
+                            className="min-h-[34px] min-w-[34px] rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center transition-colors"
+                          >
+                            <MessageSquare size={14} />
+                          </button>
+                        )}
+                        {!isMe && <FollowButton targetUserId={u.uid} variant="compact" />}
+                        {isOwnProfile && followListType === 'followers' && !isMe && (
+                          <button
+                            type="button"
+                            disabled={removingFollowerId === u.uid}
+                            onClick={() => handleRemoveFollower(u.uid)}
+                            title={t('removeFollower')}
+                            aria-label={t('removeFollower')}
+                            className="min-h-[34px] px-2.5 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/70 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center gap-1 transition-colors disabled:opacity-50"
+                          >
+                            {removingFollowerId === u.uid ? (
+                              <Loader2 size={13} className="animate-spin" />
+                            ) : (
+                              <UserMinus size={13} />
+                            )}
+                            <span>{t('removeFollower')}</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

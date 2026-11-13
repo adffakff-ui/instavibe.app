@@ -38,8 +38,6 @@ import {
   ArrowRight,
   ArrowLeft,
   ShieldAlert,
-  UserPlus,
-  UserCheck,
   Loader2,
   CheckCircle2,
   Wifi,
@@ -54,6 +52,8 @@ import {
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
+import UserAvatar from './UserAvatar';
+import FollowButton from './FollowButton';
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
@@ -185,8 +185,8 @@ export default function LiveView({
   onOpenProfile: (uid: string) => void;
   onOpenChat: (convId: string) => void;
 }) {
-  const { user, profile, following, blockedUsers, language, t } = useAuth();
-  const { followUser, unfollowUser, blockUser, getOrCreateConversation } = useFirestore();
+  const { user, profile, blockedUsers, language, t } = useAuth();
+  const { blockUser, getOrCreateConversation } = useFirestore();
   const isAr = language === 'ar';
 
   // Primary navigation mode within Live module
@@ -1849,8 +1849,6 @@ export default function LiveView({
   // RENDER: ACTIVE BROADCASTER OR VIEWER ROOM (WITH SPLIT-SCREEN CO-HOST)
   // ===========================================================================
   if ((mode === 'broadcasting' || mode === 'watching') && currentStream) {
-    const isFollowingHost = following.includes(currentStream.hostId);
-
     return (
       <div className="max-w-6xl mx-auto pb-8 animate-in fade-in">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
@@ -1885,11 +1883,10 @@ export default function LiveView({
                     (!isHost && connectionState !== 'connected')) && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-gradient-to-br from-slate-900 via-black to-slate-900 text-white gap-2.5">
                       <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-rose-500/70 bg-slate-800">
-                        <img
-                          src={currentStream.hostPhotoURL || '/placeholder-avatar.jpg'}
-                          alt={currentStream.hostUsername}
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
+                        <UserAvatar
+                          src={currentStream.hostPhotoURL}
+                          username={currentStream.hostUsername}
+                          iconSize={26}
                         />
                       </div>
                       <span className="text-xs text-slate-300">
@@ -1945,11 +1942,10 @@ export default function LiveView({
                       (guestConnectionState !== 'connected' || currentStream.guestCamEnabled === false))) && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center bg-gradient-to-br from-purple-950/60 via-slate-950 to-slate-900 text-white gap-2.5">
                       <div className="w-16 h-16 rounded-full overflow-hidden border-2 border-purple-400/70 bg-slate-800">
-                        <img
-                          src={currentStream.guestPhotoURL || '/placeholder-avatar.jpg'}
-                          alt={currentStream.guestUsername || ''}
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
+                        <UserAvatar
+                          src={currentStream.guestPhotoURL}
+                          username={currentStream.guestUsername}
+                          iconSize={26}
                         />
                       </div>
                       <span className="text-xs text-slate-300">
@@ -2021,11 +2017,10 @@ export default function LiveView({
                   (!isHost && connectionState !== 'connected')) && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-gradient-to-br from-slate-900 via-black to-slate-900 text-white gap-4">
                     <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-rose-500/70 bg-slate-800">
-                      <img
-                        src={currentStream.hostPhotoURL || '/placeholder-avatar.jpg'}
-                        alt={currentStream.hostUsername}
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
+                      <UserAvatar
+                        src={currentStream.hostPhotoURL}
+                        username={currentStream.hostUsername}
+                        iconSize={30}
                       />
                     </div>
                     {isHost ? (
@@ -2154,11 +2149,10 @@ export default function LiveView({
                   className="flex items-center gap-2.5 min-w-0 text-start"
                 >
                   <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-rose-500 shrink-0 bg-slate-800">
-                    <img
-                      src={currentStream.hostPhotoURL || '/placeholder-avatar.jpg'}
-                      alt={currentStream.hostUsername}
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
+                    <UserAvatar
+                      src={currentStream.hostPhotoURL}
+                      username={currentStream.hostUsername}
+                      iconSize={18}
                     />
                   </div>
                   <div className="min-w-0">
@@ -2177,22 +2171,7 @@ export default function LiveView({
                 </button>
 
                 {!isHost && user && currentStream.hostId !== user.uid && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      isFollowingHost
-                        ? unfollowUser(user.uid, currentStream.hostId)
-                        : followUser(user.uid, currentStream.hostId, profile)
-                    }
-                    className={`min-h-[36px] px-3 rounded-xl text-xs font-bold flex items-center gap-1 whitespace-nowrap shrink-0 transition-colors ${
-                      isFollowingHost
-                        ? 'bg-white/20 text-white'
-                        : 'bg-white text-slate-900 hover:bg-slate-100'
-                    }`}
-                  >
-                    {isFollowingHost ? <UserCheck size={14} /> : <UserPlus size={14} />}
-                    <span>{isFollowingHost ? t('following') : t('follow')}</span>
-                  </button>
+                  <FollowButton targetUserId={currentStream.hostId} variant="overlay" />
                 )}
               </div>
 
@@ -2238,11 +2217,10 @@ export default function LiveView({
               <div className="relative z-30 mx-4 p-4 rounded-2xl bg-slate-900/95 border border-purple-500/50 backdrop-blur-lg text-white shadow-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
                   <div className="w-11 h-11 rounded-full overflow-hidden border-2 border-purple-400 shrink-0">
-                    <img
-                      src={currentStream.hostPhotoURL || '/placeholder-avatar.jpg'}
-                      alt={currentStream.hostUsername}
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
+                    <UserAvatar
+                      src={currentStream.hostPhotoURL}
+                      username={currentStream.hostUsername}
+                      iconSize={18}
                     />
                   </div>
                   <div>
@@ -2586,11 +2564,10 @@ export default function LiveView({
                     <div key={comment.id} className="flex items-start justify-between gap-2.5 group text-sm">
                       <div className="flex items-start gap-2.5 min-w-0">
                         <div className="w-7 h-7 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800 shrink-0 mt-0.5">
-                          <img
-                            src={comment.userPhotoURL || '/placeholder-avatar.jpg'}
-                            alt={comment.username}
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
+                          <UserAvatar
+                            src={comment.userPhotoURL}
+                            username={comment.username}
+                            iconSize={13}
                           />
                         </div>
                         <div className="min-w-0">
@@ -2706,11 +2683,10 @@ export default function LiveView({
                   <div className="p-3.5 rounded-2xl bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div className="w-9 h-9 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800 shrink-0">
-                        <img
-                          src={currentStream.guestPhotoURL || '/placeholder-avatar.jpg'}
-                          alt={currentStream.guestUsername || ''}
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
+                        <UserAvatar
+                          src={currentStream.guestPhotoURL}
+                          username={currentStream.guestUsername}
+                          iconSize={16}
                         />
                       </div>
                       <div className="min-w-0">
@@ -2757,11 +2733,10 @@ export default function LiveView({
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <div className="w-9 h-9 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700 shrink-0">
-                            <img
-                              src={req.photoURL || '/placeholder-avatar.jpg'}
-                              alt={req.username}
-                              className="w-full h-full object-cover"
-                              referrerPolicy="no-referrer"
+                            <UserAvatar
+                              src={req.photoURL}
+                              username={req.username}
+                              iconSize={16}
                             />
                           </div>
                           <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
@@ -2802,11 +2777,10 @@ export default function LiveView({
                       >
                         <div className="flex items-center gap-2.5 min-w-0">
                           <div className="w-9 h-9 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700 shrink-0">
-                            <img
-                              src={v.photoURL || '/placeholder-avatar.jpg'}
-                              alt={v.username}
-                              className="w-full h-full object-cover"
-                              referrerPolicy="no-referrer"
+                            <UserAvatar
+                              src={v.photoURL}
+                              username={v.username}
+                              iconSize={16}
                             />
                           </div>
                           <span className="text-xs font-bold text-slate-900 dark:text-white truncate">
@@ -2865,11 +2839,10 @@ export default function LiveView({
                         >
                           <div className="flex items-center gap-2.5 min-w-0">
                             <div className="w-8 h-8 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-700 shrink-0">
-                              <img
-                                src={u.photoURL || '/placeholder-avatar.jpg'}
-                                alt={u.username}
-                                className="w-full h-full object-cover"
-                                referrerPolicy="no-referrer"
+                              <UserAvatar
+                                src={u.photoURL}
+                                username={u.username}
+                                iconSize={14}
                               />
                             </div>
                             <div className="min-w-0">
@@ -2937,11 +2910,10 @@ export default function LiveView({
                     <div key={v.id} className="flex items-center justify-between p-2.5 gap-3">
                       <div className="flex items-center gap-3 min-w-0">
                         <div className="w-9 h-9 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800 shrink-0">
-                          <img
-                            src={v.photoURL || '/placeholder-avatar.jpg'}
-                            alt={v.username}
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
+                          <UserAvatar
+                            src={v.photoURL}
+                            username={v.username}
+                            iconSize={16}
                           />
                         </div>
                         <span className="text-sm font-bold text-slate-900 dark:text-white truncate">
@@ -2997,11 +2969,10 @@ export default function LiveView({
             >
               <div className="flex items-center gap-3">
                 <div className="w-11 h-11 rounded-full overflow-hidden border-2 border-white/80 shrink-0 bg-purple-800">
-                  <img
-                    src={invite.hostPhotoURL || '/placeholder-avatar.jpg'}
-                    alt={invite.hostUsername}
-                    className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
+                  <UserAvatar
+                    src={invite.hostPhotoURL}
+                    username={invite.hostUsername}
+                    iconSize={18}
                   />
                 </div>
                 <div>
@@ -3154,11 +3125,10 @@ export default function LiveView({
 
                 <div className="p-3.5 flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800 shrink-0">
-                    <img
-                      src={stream.hostPhotoURL || '/placeholder-avatar.jpg'}
-                      alt={stream.hostUsername}
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
+                    <UserAvatar
+                      src={stream.hostPhotoURL}
+                      username={stream.hostUsername}
+                      iconSize={16}
                     />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -3193,11 +3163,10 @@ export default function LiveView({
                 className="cursor-pointer p-3.5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/70 transition-colors flex items-center gap-3"
               >
                 <div className="w-10 h-10 rounded-full overflow-hidden bg-slate-200 dark:bg-slate-800 shrink-0">
-                  <img
-                    src={stream.hostPhotoURL || '/placeholder-avatar.jpg'}
-                    alt={stream.hostUsername}
-                    className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
+                  <UserAvatar
+                    src={stream.hostPhotoURL}
+                    username={stream.hostUsername}
+                    iconSize={18}
                   />
                 </div>
                 <div className="min-w-0 flex-1">

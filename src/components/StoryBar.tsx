@@ -2,58 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { collection, query, orderBy, onSnapshot, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import { Plus, ChevronLeft, ChevronRight, Sparkles, Camera, Bookmark } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Camera, Bookmark, Sparkles } from 'lucide-react';
 import StoryCreation from './StoryCreation';
 import StoryViewer, { StoryItem } from './StoryViewer';
 import { getSavedStoryDrafts } from '../utils/storyDrafts';
-
-// High-fidelity fallback demo stories if Firestore has no user stories yet
-const DEMO_STORIES: StoryItem[] = [
-  {
-    id: 'demo-story-1',
-    authorId: 'creator_sophia',
-    authorUsername: 'sophia.travels',
-    authorPhotoURL: '/src/assets/images/avatar_woman_1794501562592.jpg',
-    mediaURL: '/src/assets/images/story_sunset_1794501562415.jpg',
-    mediaType: 'image',
-    caption: 'Sunset hues in Santorini ✨🇬🇷',
-    createdAt: { toDate: () => new Date(Date.now() - 3600000 * 2) },
-    expiresAt: new Date(Date.now() + 3600000 * 22).toISOString(),
-  },
-  {
-    id: 'demo-story-2',
-    authorId: 'creator_alex',
-    authorUsername: 'alex.roasts',
-    authorPhotoURL: '/src/assets/images/avatar_man_1794501560820.jpg',
-    mediaURL: '/src/assets/images/story_coffee_1794501561737.jpg',
-    mediaType: 'image',
-    caption: 'Single origin pour-over. Perfection. ☕️🤎',
-    createdAt: { toDate: () => new Date(Date.now() - 3600000 * 5) },
-    expiresAt: new Date(Date.now() + 3600000 * 19).toISOString(),
-  },
-  {
-    id: 'demo-story-3',
-    authorId: 'creator_leo',
-    authorUsername: 'leo_visuals',
-    authorPhotoURL: '/src/assets/images/city_night_1794501562076.jpg',
-    mediaURL: '/src/assets/images/city_night_1794501562076.jpg',
-    mediaType: 'image',
-    caption: 'Tokyo midnight reflections 🌃🌧️',
-    createdAt: { toDate: () => new Date(Date.now() - 3600000 * 1) },
-    expiresAt: new Date(Date.now() + 3600000 * 23).toISOString(),
-  },
-  {
-    id: 'demo-story-4',
-    authorId: 'creator_elena',
-    authorUsername: 'elena.lifestyle',
-    authorPhotoURL: '/src/assets/images/beach_lifestyle_1794501561335.jpg',
-    mediaURL: 'https://assets.mixkit.co/videos/preview/mixkit-vertical-view-of-waves-on-a-beach-43187-large.mp4',
-    mediaType: 'video',
-    caption: 'Vitamin Sea wave therapy 🌊✨',
-    createdAt: { toDate: () => new Date(Date.now() - 3600000 * 3) },
-    expiresAt: new Date(Date.now() + 3600000 * 21).toISOString(),
-  }
-];
+import UserAvatar from './UserAvatar';
 
 export default function StoryBar() {
   const { user, profile, blockedUsers, language, t } = useAuth();
@@ -64,7 +17,6 @@ export default function StoryBar() {
   const [viewedStoryIds, setViewedStoryIds] = useState<Set<string>>(() => new Set());
   const [draftsCount, setDraftsCount] = useState<number>(0);
 
-  // Sync drafts count
   useEffect(() => {
     if (user?.uid) {
       const drafts = getSavedStoryDrafts(user.uid);
@@ -76,7 +28,6 @@ export default function StoryBar() {
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
-  // Check scroll position for desktop scroll arrows
   const checkScroll = () => {
     if (scrollContainerRef.current) {
       const { scrollLeft, scrollWidth, clientWidth } = scrollContainerRef.current;
@@ -133,16 +84,12 @@ export default function StoryBar() {
           });
         });
 
-        if (activeStories.length === 0) {
-          setStories(DEMO_STORIES);
-        } else {
-          setStories(activeStories);
-        }
+        setStories(activeStories);
         setLoading(false);
       },
       (error) => {
-        console.warn('Stories snapshot listener error, using fallback demo stories:', error);
-        setStories(DEMO_STORIES);
+        console.warn('Stories snapshot listener error:', error);
+        setStories([]);
         setLoading(false);
       }
     );
@@ -165,7 +112,7 @@ export default function StoryBar() {
   }, {});
 
   const myUserStoryGroup = user ? groupedStories[user.uid] : null;
-  const userHasStory = myUserStoryGroup && myUserStoryGroup.stories.length > 0;
+  const userHasStory = Boolean(myUserStoryGroup && myUserStoryGroup.stories.length > 0);
 
   const otherAuthors = Object.values(groupedStories).filter(
     (g) => !user || g.authorId !== user.uid
@@ -250,7 +197,7 @@ export default function StoryBar() {
             <button
               type="button"
               onClick={() => {
-                if (userHasStory) {
+                if (userHasStory && myUserStoryGroup) {
                   handleOpenUserStories(myUserStoryGroup.stories);
                 } else {
                   setShowCreation(true);
@@ -263,11 +210,11 @@ export default function StoryBar() {
               }`}
             >
               <div className="w-16 h-16 rounded-full border-2 border-white dark:border-slate-900 overflow-hidden bg-slate-200 dark:bg-slate-800">
-                <img
-                  src={profile?.photoURL || '/placeholder-avatar.jpg'}
+                <UserAvatar
+                  src={profile?.photoURL}
+                  username={profile?.username}
                   alt={t('profile')}
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
+                  iconSize={22}
                 />
               </div>
             </button>
@@ -316,11 +263,10 @@ export default function StoryBar() {
                 }`}
               >
                 <div className="w-16 h-16 rounded-full border-2 border-white dark:border-slate-900 overflow-hidden bg-slate-100 dark:bg-slate-800">
-                  <img
-                    src={authorGroup.authorPhotoURL || '/placeholder-avatar.jpg'}
-                    alt={authorGroup.authorUsername}
-                    className="w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
+                  <UserAvatar
+                    src={authorGroup.authorPhotoURL}
+                    username={authorGroup.authorUsername}
+                    iconSize={22}
                   />
                 </div>
               </button>
@@ -330,6 +276,21 @@ export default function StoryBar() {
             </div>
           );
         })}
+
+        {!loading && otherAuthors.length === 0 && !userHasStory && (
+          <button
+            type="button"
+            onClick={() => setShowCreation(true)}
+            className="flex items-center gap-2.5 px-4 py-3 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-dashed border-slate-200 dark:border-slate-700 hover:border-purple-400 dark:hover:border-purple-600 transition-colors text-start"
+          >
+            <Sparkles size={16} className="text-purple-500 shrink-0" />
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              {language === 'ar'
+                ? 'لا توجد قصص نشطة الآن — شارك قصتك الأولى لمدة 24 ساعة!'
+                : 'No active stories yet — share your first 24h story!'}
+            </span>
+          </button>
+        )}
 
         {loading && (
           <div className="flex gap-4">
@@ -345,8 +306,8 @@ export default function StoryBar() {
 
       {/* Story Creation Modal */}
       {showCreation && (
-        <StoryCreation 
-          onClose={() => setShowCreation(false)} 
+        <StoryCreation
+          onClose={() => setShowCreation(false)}
         />
       )}
 

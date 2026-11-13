@@ -4,7 +4,9 @@ import { db } from '../lib/firebase';
 import Post from './Post';
 import StoryBar from './StoryBar';
 import PostCreation from './PostCreation';
-import { Sparkles, ChevronRight } from 'lucide-react';
+import SuggestedUsersCard from './SuggestedUsersCard';
+import { PostSkeleton } from './SkeletonLoaders';
+import { Sparkles, ChevronRight, Users, Image as ImageIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -13,183 +15,178 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const DEMO_POSTS = [
-  {
-    id: 'demo-1',
-    authorId: 'user_traveler',
-    authorUsername: 'traveler_joy',
-    authorPhotoURL: '/src/assets/images/avatar_woman_1794501562592.jpg',
-    mediaURL: '/src/assets/images/beach_lifestyle_1794501561335.jpg',
-    mediaType: 'image',
-    caption: 'Nothing beats a sunset at the beach! 🌊🌅 #summer #vibes',
-    likesCount: 124,
-    commentsCount: 12,
-    createdAt: { toDate: () => new Date() },
-  },
-  {
-    id: 'demo-video-1',
-    authorId: 'user_ocean',
-    authorUsername: 'ocean_escapes',
-    authorPhotoURL: '/src/assets/images/avatar_woman_1794501562592.jpg',
-    mediaURL: 'https://assets.mixkit.co/videos/preview/mixkit-vertical-view-of-waves-on-a-beach-43187-large.mp4',
-    mediaType: 'video',
-    caption: 'Calm ocean waves rolling onto the shore 🌊🎥 #ocean #relax',
-    likesCount: 218,
-    commentsCount: 19,
-    createdAt: { toDate: () => new Date() },
-  },
-  {
-    id: 'demo-2',
-    authorId: 'user_chef',
-    authorUsername: 'chef_mario',
-    authorPhotoURL: '/src/assets/images/avatar_man_1794501560820.jpg',
-    mediaURL: '/src/assets/images/pasta_dish_1794501561956.jpg',
-    mediaType: 'image',
-    caption: 'Fresh pasta with truffles. Simple is best. 🍝✨',
-    likesCount: 89,
-    commentsCount: 5,
-    createdAt: { toDate: () => new Date() },
-  },
-  {
-    id: 'demo-3',
-    authorId: 'user_minimalist',
-    authorUsername: 'tech_minimalist',
-    authorPhotoURL: '/src/assets/images/avatar_man_1794501560820.jpg',
-    mediaURL: '/src/assets/images/minimal_workspace_1794501562383.jpg',
-    mediaType: 'image',
-    caption: 'Focused morning. 💻🌿',
-    likesCount: 56,
-    commentsCount: 3,
-    createdAt: { toDate: () => new Date() },
-  }
-];
-
-export default function Feed({ 
-  onOpenChat, 
+export default function Feed({
+  onOpenChat,
   onOpenProfile,
-  setView
-}: { 
-  onOpenChat: (convId: string) => void, 
-  onOpenProfile: (uid: string) => void,
-  setView: (view: any) => void
+  onSelectTag,
+  setView,
+}: {
+  onOpenChat: (convId: string) => void;
+  onOpenProfile: (uid: string) => void;
+  onSelectTag?: (tag: string) => void;
+  setView: (view: any) => void;
 }) {
-  const { user, blockedUsers, language } = useAuth();
+  const { user, following, blockedUsers, language } = useAuth();
   const [posts, setPosts] = useState<any[]>([]);
-  const [followingIds, setFollowingIds] = useState<string[]>([]);
   const [filter, setFilter] = useState<'all' | 'following'>('all');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!user) return;
-    
-    // Fetch following list
-    const q = query(collection(db, 'users', user.uid, 'following'));
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const ids = snapshot.docs.map(doc => doc.id);
-        setFollowingIds(ids);
-      },
-      (err) => {
-        console.warn('Following feed listener notice:', err);
-      }
-    );
-
-    return unsubscribe;
-  }, [user]);
-
-  useEffect(() => {
-    let q;
     const isFollowingFilter = filter === 'following' && Boolean(user);
-    if (isFollowingFilter) {
-      if (followingIds.length > 0) {
-        q = query(
-          collection(db, 'posts'),
-          where('authorId', 'in', followingIds.slice(0, 30))
-        );
-      } else {
-        setPosts([]);
-        return;
-      }
+
+    if (isFollowingFilter && following.length === 0) {
+      setPosts([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    let q;
+    if (isFollowingFilter && following.length <= 30) {
+      q = query(
+        collection(db, 'posts'),
+        where('authorId', 'in', following)
+      );
+    } else if (isFollowingFilter) {
+      q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(100));
     } else {
       q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(50));
     }
+
+    const followingSet = new Set(following);
 
     const unsubscribe = onSnapshot(
       q,
       (snapshot) => {
         let postsData = snapshot.docs
-          .map(doc => ({ id: doc.id, ...doc.data() }))
-          .filter((p: any) => !blockedUsers.includes(p.authorId)); // Filter out blocked users
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .filter((p: any) => !blockedUsers.includes(p.authorId));
 
         if (isFollowingFilter) {
-          postsData = postsData.sort(
-            (a: any, b: any) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0)
-          );
+          postsData = postsData
+            .filter((p: any) => followingSet.has(p.authorId))
+            .sort((a: any, b: any) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
         }
 
-        setPosts(postsData.length > 0 ? postsData : (filter === 'all' ? DEMO_POSTS : []));
+        setPosts(postsData);
+        setLoading(false);
       },
       (err) => {
         console.warn('Posts feed listener error:', err);
-        setPosts(filter === 'all' ? DEMO_POSTS : []);
+        setPosts([]);
+        setLoading(false);
       }
     );
 
     return unsubscribe;
-  }, [filter, followingIds, user, blockedUsers]);
+  }, [filter, following, user, blockedUsers]);
 
   return (
     <div className="space-y-6">
       <StoryBar />
 
       <div className="flex items-center justify-center gap-8 border-b border-slate-100 dark:border-slate-800 mb-4">
-        <button 
+        <button
+          type="button"
           onClick={() => setFilter('all')}
           className={cn(
-            "pb-3 text-sm font-semibold transition-colors relative",
-            filter === 'all' ? "text-slate-900 dark:text-white" : "text-slate-400 hover:text-slate-600"
+            'pb-3 text-sm font-semibold transition-colors relative',
+            filter === 'all' ? 'text-slate-900 dark:text-white' : 'text-slate-400 hover:text-slate-600'
           )}
         >
           {language === 'ar' ? 'لك' : 'For You'}
           {filter === 'all' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-900 dark:bg-white" />}
         </button>
-        <button 
+        <button
+          type="button"
           onClick={() => setFilter('following')}
           className={cn(
-            "pb-3 text-sm font-semibold transition-colors relative",
-            filter === 'following' ? "text-slate-900 dark:text-white" : "text-slate-400 hover:text-slate-600"
+            'pb-3 text-sm font-semibold transition-colors relative flex items-center gap-1.5',
+            filter === 'following' ? 'text-slate-900 dark:text-white' : 'text-slate-400 hover:text-slate-600'
           )}
         >
-          {language === 'ar' ? 'المتابَعون' : 'Following'}
+          <span>{language === 'ar' ? 'المتابَعون' : 'Following'}</span>
+          {following.length > 0 && (
+            <span className="text-[11px] font-bold tabular-nums px-1.5 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+              {following.length}
+            </span>
+          )}
           {filter === 'following' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-900 dark:bg-white" />}
         </button>
       </div>
 
-      <div 
+      <button
+        type="button"
         onClick={() => setView('discover')}
-        className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 p-4 rounded-2xl flex items-center justify-between cursor-pointer hover:opacity-90 transition-opacity mb-2 shadow-lg shadow-slate-900/10"
+        className="w-full text-start bg-slate-900 dark:bg-white text-white dark:text-slate-900 p-4 rounded-2xl flex items-center justify-between cursor-pointer hover:opacity-90 transition-opacity mb-2 shadow-lg shadow-slate-900/10"
       >
         <div className="flex items-center gap-3">
-          <Sparkles className="text-yellow-400" size={20} />
+          <Sparkles className="text-yellow-400 shrink-0" size={20} />
           <span className="text-sm font-bold">
             {language === 'ar' ? 'اكتشف محتوى مخصصاً لك' : 'Discover content tailored for you'}
           </span>
         </div>
-        <ChevronRight size={18} className={language === 'ar' ? 'rotate-180' : ''} />
-      </div>
+        <ChevronRight size={18} className={language === 'ar' ? 'rotate-180 shrink-0' : 'shrink-0'} />
+      </button>
 
       <PostCreation />
-      
+
+      {filter === 'all' && (
+        <SuggestedUsersCard layout="horizontal" onOpenProfile={onOpenProfile} />
+      )}
+
       <div className="flex flex-col gap-8 pb-10">
-        {posts.map((post) => (
-          <Post key={post.id} post={post} onOpenChat={onOpenChat} onOpenProfile={onOpenProfile} />
-        ))}
-        {filter === 'following' && posts.length === 0 && (
-          <div className="text-center py-20 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
-            <p className="text-slate-500 font-medium">
+        {loading ? (
+          <>
+            <PostSkeleton />
+            <PostSkeleton />
+          </>
+        ) : posts.length > 0 ? (
+          posts.map((post) => (
+            <Post
+              key={post.id}
+              post={post}
+              onOpenChat={onOpenChat}
+              onOpenProfile={onOpenProfile}
+              onSelectTag={onSelectTag}
+              onPostDeleted={(deletedId) => setPosts((prev) => prev.filter((p) => p.id !== deletedId))}
+            />
+          ))
+        ) : filter === 'following' ? (
+          <div className="space-y-5">
+            <div className="text-center py-12 px-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">
+              <div className="w-12 h-12 rounded-2xl bg-purple-50 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 flex items-center justify-center mx-auto mb-2">
+                <Users size={22} />
+              </div>
+              <p className="text-slate-900 dark:text-white font-bold text-sm">
+                {following.length === 0
+                  ? language === 'ar'
+                    ? 'لم تتابع أحداً بعد'
+                    : "You aren't following anyone yet"
+                  : language === 'ar'
+                  ? 'لا توجد منشورات جديدة ممن تتابعهم حالياً'
+                  : 'No recent posts from accounts you follow'}
+              </p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {language === 'ar'
+                  ? 'تابع حسابات حقيقية أدناه لتظهر منشوراتهم مباشرة في هذا الخلاصة.'
+                  : 'Follow people below to see their posts right here.'}
+              </p>
+            </div>
+            <SuggestedUsersCard layout="list" onOpenProfile={onOpenProfile} />
+          </div>
+        ) : (
+          <div className="text-center py-16 px-6 bg-white dark:bg-slate-900 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 space-y-2">
+            <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 text-slate-500 flex items-center justify-center mx-auto mb-2">
+              <ImageIcon size={22} />
+            </div>
+            <p className="text-slate-900 dark:text-white font-bold text-sm">
+              {language === 'ar' ? 'لا توجد منشورات بعد' : 'No posts yet'}
+            </p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
               {language === 'ar'
-                ? 'تابع بعض الأشخاص لرؤية منشوراتهم هنا!'
-                : 'Follow some people to see their posts here!'}
+                ? 'كن أول من يشارك لحظة جديدة عبر صندوق النشر في الأعلى!'
+                : 'Be the first to share a photo or video using the post composer above!'}
             </p>
           </div>
         )}

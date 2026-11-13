@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { Search, MessageSquare, Loader2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
+import UserAvatar from './UserAvatar';
 
 export default function MessagesList({ onSelectConversation }: { onSelectConversation: (id: string) => void }) {
   const { user, blockedUsers, language, t } = useAuth();
@@ -29,15 +30,9 @@ export default function MessagesList({ onSelectConversation }: { onSelectConvers
             const otherId = data.participantIds?.find((id: string) => id !== user.uid);
             if (!otherId || blockedUsers.includes(otherId)) return null;
 
-            const demoCreators: Record<string, { username: string; photoURL: string }> = {
-              creator_sophia: { username: 'sophia.travels', photoURL: '/src/assets/images/avatar_woman_1794501562592.jpg' },
-              creator_alex: { username: 'alex.roasts', photoURL: '/src/assets/images/avatar_man_1794501560820.jpg' },
-              creator_leo: { username: 'leo_visuals', photoURL: '/src/assets/images/city_night_1794501562076.jpg' },
-              creator_elena: { username: 'elena.lifestyle', photoURL: '/src/assets/images/beach_lifestyle_1794501561335.jpg' },
-            };
-            const fallbackUser = demoCreators[otherId] || {
+            const fallbackUser = {
               username: language === 'ar' ? 'مستخدم' : 'User',
-              photoURL: '/placeholder-avatar.jpg',
+              photoURL: '',
             };
 
             try {
@@ -132,12 +127,11 @@ export default function MessagesList({ onSelectConversation }: { onSelectConvers
               onClick={() => onSelectConversation(conv.id)}
               className="w-full flex items-center gap-3 p-4 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors text-start"
             >
-              <div className="w-12 h-12 rounded-full overflow-hidden border border-slate-200 shrink-0">
-                <img
-                  src={conv.otherUser?.photoURL || '/placeholder-avatar.jpg'}
-                  alt={conv.otherUser?.username || ''}
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
+              <div className="w-12 h-12 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0">
+                <UserAvatar
+                  src={conv.otherUser?.photoURL}
+                  username={conv.otherUser?.username}
+                  iconSize={20}
                 />
               </div>
               <div className="flex-1 min-w-0">

@@ -6,22 +6,23 @@ import {
   Trash2, 
   Volume2, 
   VolumeX, 
-  Play, 
   Pause, 
   Send, 
   Clock, 
   Heart,
-  Flame,
-  Laugh,
-  PartyPopper,
   Check,
   BarChart2,
   Archive
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
+import { BurstInstance, TapBurstOverlay } from './ReactionBar';
+import { REACTIONS, REACTION_MAP, ReactionType, getTopReactionEntries, normalizeReaction } from '../utils/reactions';
+import UserAvatar from './UserAvatar';
 
 export interface StoryPoll {
   question: string;
@@ -32,6 +33,13 @@ export interface StoryPoll {
   voters?: Record<string, string>;
 }
 
+export interface StoryReactionEntry {
+  userId: string;
+  username?: string;
+  userPhotoURL?: string;
+  reaction: ReactionType;
+}
+
 export interface StoryItem {
   id: string;
   authorId: string;
@@ -40,6 +48,8 @@ export interface StoryItem {
   mediaURL: string;
   mediaType?: 'image' | 'video';
   caption?: string;
+  likesCount?: number;
+  reactionCounts?: Record<string, number>;
   poll?: StoryPoll;
   createdAt: any;
   expiresAt?: string;
@@ -63,7 +73,7 @@ export default function StoryViewer({
   onStoryArchived,
 }: StoryViewerProps) {
   const { user, profile, language } = useAuth();
-  const { deleteStory, archiveStory, voteStoryPoll, getOrCreateConversation, sendMessage } = useFirestore();
+  const { deleteStory, archiveStory, voteStoryPoll, reactToStory, removeStoryReaction, getOrCreateConversation, sendMessage } = useFirestore();
 
   const [activeStories, setActiveStories] = useState<StoryItem[]>(initialStories);
   const [currentIndex, setCurrentIndex] = useState(
@@ -78,8 +88,18 @@ export default function StoryViewer({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [archiving, setArchiving] = useState(false);
 
+  // Story reaction & burst states
+  const [storyReactions, setStoryReactions] = useState<StoryReactionEntry[]>([]);
+  const [bursts, setBursts] = useState<BurstInstance[]>([]);
+  const [floatingReactions, setFloatingReactions] = useState<{ id: number; emoji: string; offset: number }[]>([]);
+  const [heartPopping, setHeartPopping] = useState(false);
+  const [showReactionsList, setShowReactionsList] = useState(false);
+
   const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaCanvasRef = useRef<HTMLDivElement>(null);
   const progressTimerRef = useRef<any>(null);
+  const lastTapRef = useRef<number>(0);
+  const singleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentStory = activeStories[currentIndex];
   const isOwner = user && currentStory && currentStory.authorId === user.uid;
@@ -127,6 +147,42 @@ export default function StoryViewer({
     }
   };
 
+  // Cleanup tap timer on unmount
+  useEffect(() => {
+    return () => {
+      if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
+    };
+  }, []);
+
+  // Real-time story reactions listener
+  useEffect(() => {
+    setShowReactionsList(false);
+    if (!currentStory?.id || !user) {
+      setStoryReactions([]);
+      return;
+    }
+
+    const reactionsRef = collection(db, 'stories', currentStory.id, 'reactions');
+    const unsub = onSnapshot(
+      reactionsRef,
+      (snap) => {
+        const list: StoryReactionEntry[] = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            userId: d.id,
+            username: data.username,
+            userPhotoURL: data.userPhotoURL,
+            reaction: normalizeReaction(data.reaction, 'heart'),
+          };
+        });
+        setStoryReactions(list);
+      },
+      (err) => console.warn('Story reactions listener notice:', err)
+    );
+
+    return unsub;
+  }, [currentStory?.id, user]);
+
   // Progress Bar Timer for Images / Fallback
   useEffect(() => {
     setProgress(0);
@@ -144,7 +200,7 @@ export default function StoryViewer({
     const STEP = (INTERVAL_MS / DURATION_MS) * 100;
 
     progressTimerRef.current = setInterval(() => {
-      if (isPaused || confirmDelete) return;
+      if (isPaused || confirmDelete || showReactionsList) return;
 
       setProgress((prev) => {
         if (prev >= 100) {
@@ -158,7 +214,7 @@ export default function StoryViewer({
     return () => {
       if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     };
-  }, [currentIndex, currentStory, isPaused, confirmDelete, activeStories.length]);
+  }, [currentIndex, currentStory, isPaused, confirmDelete, showReactionsList, activeStories.length]);
 
   // Video Time Update Handler
   const handleVideoTimeUpdate = () => {
@@ -206,7 +262,7 @@ export default function StoryViewer({
   }, [isPaused, confirmDelete, currentStory]);
 
   const handleArchiveCurrentStory = async () => {
-    if (!currentStory || !isOwner || currentStory.id.startsWith('demo-') || archiving) return;
+    if (!currentStory || !isOwner || archiving) return;
     const storyIdToArchive = currentStory.id;
     setArchiving(true);
     try {
@@ -256,9 +312,7 @@ export default function StoryViewer({
     if (!user || !currentStory || !currentStory.poll) return;
 
     try {
-      if (!currentStory.id.startsWith('demo-')) {
-        await voteStoryPoll(currentStory.id, user.uid, choice, currentStory.poll);
-      }
+      await voteStoryPoll(currentStory.id, user.uid, choice, currentStory.poll);
       
       // Optimistic / Local update
       const updatedPoll = { ...currentStory.poll };
@@ -285,6 +339,124 @@ export default function StoryViewer({
     } catch (err) {
       console.error('Failed to vote on poll:', err);
     }
+  };
+
+  const spawnBurst = (emoji: string, x?: number, y?: number) => {
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    setBursts((prev) => [...prev, { id, emoji, x, y }]);
+    setTimeout(() => {
+      setBursts((prev) => prev.filter((b) => b.id !== id));
+    }, 820);
+  };
+
+  const spawnFloatingReaction = (emoji: string) => {
+    const id = Date.now() + Math.floor(Math.random() * 1000);
+    const offset = Math.floor(Math.random() * 64) - 32;
+    setFloatingReactions((prev) => [...prev, { id, emoji, offset }]);
+    setTimeout(() => {
+      setFloatingReactions((prev) => prev.filter((item) => item.id !== id));
+    }, 1150);
+  };
+
+  const currentUserReaction: ReactionType | null =
+    storyReactions.find((r) => r.userId === user?.uid)?.reaction ?? null;
+
+  const derivedReactionCounts: Record<string, number> = (() => {
+    if (storyReactions.length > 0) {
+      return storyReactions.reduce((acc, item) => {
+        acc[item.reaction] = (acc[item.reaction] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+    }
+    return currentStory?.reactionCounts || {};
+  })();
+
+  const totalStoryReactionsCount =
+    storyReactions.length > 0 ? storyReactions.length : currentStory?.likesCount || 0;
+
+  const applyStoryReaction = async (
+    reaction: ReactionType,
+    options?: { keepExisting?: boolean; burstCoords?: { x: number; y: number } }
+  ) => {
+    if (!user || !currentStory) return;
+    const prev = currentUserReaction;
+
+    if (options?.keepExisting && prev) {
+      if (options.burstCoords) {
+        spawnBurst(REACTION_MAP[prev].emoji, options.burstCoords.x, options.burstCoords.y);
+      }
+      return;
+    }
+
+    if (prev === reaction) {
+      // Toggle off
+      setStoryReactions((list) => list.filter((item) => item.userId !== user.uid));
+      await removeStoryReaction(currentStory.id, user.uid);
+      return;
+    }
+
+    // Record / switch reaction
+    const emoji = REACTION_MAP[reaction].emoji;
+    if (options?.burstCoords) {
+      spawnBurst(emoji, options.burstCoords.x, options.burstCoords.y);
+    } else {
+      spawnFloatingReaction(emoji);
+    }
+
+    if (reaction === 'heart') {
+      setHeartPopping(true);
+      setTimeout(() => setHeartPopping(false), 360);
+    }
+
+    setStoryReactions((list) => {
+      const filtered = list.filter((item) => item.userId !== user.uid);
+      return [
+        ...filtered,
+        {
+          userId: user.uid,
+          username: profile?.username || 'user',
+          userPhotoURL: profile?.photoURL || '',
+          reaction,
+        },
+      ];
+    });
+
+    await reactToStory(
+      currentStory.id,
+      user.uid,
+      currentStory.authorId,
+      profile || { uid: user.uid, username: language === 'ar' ? 'مستخدم' : 'User', photoURL: '' },
+      reaction
+    );
+  };
+
+  const handleZoneTap = (direction: 'prev' | 'next', e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const now = Date.now();
+    const rect = mediaCanvasRef.current?.getBoundingClientRect();
+    const x = rect ? ((e.clientX - rect.left) / rect.width) * 100 : 50;
+    const y = rect ? ((e.clientY - rect.top) / rect.height) * 100 : 50;
+
+    if (now - lastTapRef.current < 280) {
+      lastTapRef.current = 0;
+      if (singleTapTimerRef.current) {
+        clearTimeout(singleTapTimerRef.current);
+        singleTapTimerRef.current = null;
+      }
+      applyStoryReaction('heart', { keepExisting: true, burstCoords: { x, y } });
+      return;
+    }
+
+    lastTapRef.current = now;
+    if (singleTapTimerRef.current) clearTimeout(singleTapTimerRef.current);
+    singleTapTimerRef.current = setTimeout(() => {
+      singleTapTimerRef.current = null;
+      if (direction === 'prev') {
+        handlePrev();
+      } else {
+        handleNext();
+      }
+    }, 220);
   };
 
   const handleSendReply = async (textToSend?: string) => {
@@ -317,6 +489,7 @@ export default function StoryViewer({
   const totalVotes = (currentStory.poll?.votesA || 0) + (currentStory.poll?.votesB || 0);
   const pctA = totalVotes > 0 ? Math.round(((currentStory.poll?.votesA || 0) / totalVotes) * 100) : 50;
   const pctB = totalVotes > 0 ? 100 - pctA : 50;
+  const topStoryReactions = getTopReactionEntries(derivedReactionCounts, totalStoryReactionsCount, 3);
 
   return (
     <div className="fixed inset-0 z-[130] bg-black/95 sm:bg-black/90 backdrop-blur-md flex items-center justify-center sm:p-4 select-none">
@@ -377,11 +550,10 @@ export default function StoryViewer({
         <div className="absolute top-12 inset-x-3 flex items-center justify-between z-30 pointer-events-auto">
           <div className="flex items-center gap-2.5">
             <div className="w-9 h-9 rounded-full ring-2 ring-purple-500/80 overflow-hidden bg-slate-800 shrink-0">
-              <img 
-                src={currentStory.authorPhotoURL || '/placeholder-avatar.jpg'} 
-                alt={currentStory.authorUsername} 
-                className="w-full h-full object-cover" 
-                referrerPolicy="no-referrer"
+              <UserAvatar
+                src={currentStory.authorPhotoURL}
+                username={currentStory.authorUsername}
+                iconSize={16}
               />
             </div>
             <div className="flex flex-col">
@@ -435,7 +607,7 @@ export default function StoryViewer({
               </button>
             )}
 
-            {isOwner && !isArchiveMode && !currentStory.id.startsWith('demo-') && (
+            {isOwner && !isArchiveMode && (
               <button
                 type="button"
                 disabled={archiving}
@@ -505,7 +677,28 @@ export default function StoryViewer({
         </div>
 
         {/* Media Canvas Area */}
-        <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
+        <div
+          ref={mediaCanvasRef}
+          className="flex-1 relative bg-black flex items-center justify-center overflow-hidden"
+        >
+          <TapBurstOverlay bursts={bursts} />
+
+          {/* Floating Story Reactions */}
+          {floatingReactions.length > 0 && (
+            <div className="absolute bottom-8 inset-x-0 flex justify-center pointer-events-none z-30">
+              {floatingReactions.map((item) => (
+                <span
+                  key={item.id}
+                  style={{ transform: `translate3d(${item.offset}px, 0, 0)` }}
+                  className="absolute bottom-0 text-3xl sm:text-4xl drop-shadow-lg animate-story-reaction-rise"
+                  aria-hidden="true"
+                >
+                  {item.emoji}
+                </span>
+              ))}
+            </div>
+          )}
+
           {currentStory.mediaType === 'video' ? (
             <video
               ref={videoRef}
@@ -522,6 +715,7 @@ export default function StoryViewer({
               src={currentStory.mediaURL} 
               alt="Story" 
               className="w-full h-full object-cover" 
+              draggable={false}
             />
           )}
 
@@ -530,6 +724,8 @@ export default function StoryViewer({
             <div 
               className="absolute top-1/3 inset-x-4 z-20 pointer-events-auto bg-slate-900/85 backdrop-blur-md rounded-2xl p-4 shadow-2xl border border-white/20 text-white space-y-3"
               onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onTouchStart={(e) => e.stopPropagation()}
             >
               <div className="flex items-center gap-2 text-purple-400 text-xs font-bold uppercase tracking-wider">
                 <BarChart2 size={14} />
@@ -603,23 +799,17 @@ export default function StoryViewer({
             </div>
           )}
 
-          {/* Previous / Next Interactive Tap Zones */}
+          {/* Previous / Next Interactive Tap Zones (single-tap nav, double-tap like) */}
           <div className="absolute inset-0 flex z-10">
             <div 
               className="w-1/3 h-full cursor-pointer" 
-              onClick={(e) => {
-                e.stopPropagation();
-                handlePrev();
-              }} 
-              title={language === 'ar' ? 'القصة السابقة' : 'Previous story'}
+              onClick={(e) => handleZoneTap('prev', e)} 
+              title={language === 'ar' ? 'القصة السابقة (نقر مزدوج للإعجاب)' : 'Previous story (double-tap to like)'}
             />
             <div 
               className="w-2/3 h-full cursor-pointer" 
-              onClick={(e) => {
-                e.stopPropagation();
-                handleNext();
-              }} 
-              title={language === 'ar' ? 'القصة التالية' : 'Next story'}
+              onClick={(e) => handleZoneTap('next', e)} 
+              title={language === 'ar' ? 'القصة التالية (نقر مزدوج للإعجاب)' : 'Next story (double-tap to like)'}
             />
           </div>
 
@@ -651,10 +841,12 @@ export default function StoryViewer({
           </button>
         </div>
 
-        {/* Bottom Area: Caption + Direct Message reply */}
+        {/* Bottom Area: Caption + Persistent Like/Reactions + Direct Message reply */}
         <div 
-          className="relative z-30 p-4 bg-gradient-to-t from-black/90 via-black/60 to-transparent space-y-3 pointer-events-auto"
+          className="relative z-30 p-4 bg-gradient-to-t from-black/90 via-black/65 to-transparent space-y-3 pointer-events-auto"
           onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
         >
           {/* Caption Overlay */}
           {currentStory.caption && (
@@ -665,9 +857,75 @@ export default function StoryViewer({
             </div>
           )}
 
-          {/* Reply Bar (if viewing another user's story) */}
-          {!isOwner && user && (
+          {/* Owner Story Reactions Breakdown */}
+          {isOwner && (
             <div className="space-y-2">
+              {showReactionsList && (
+                <div className="bg-slate-900/95 backdrop-blur-xl border border-white/15 rounded-2xl p-3 max-h-44 overflow-y-auto no-scrollbar space-y-2">
+                  <div className="flex items-center justify-between text-xs font-bold text-white/80">
+                    <span>
+                      {language === 'ar' ? 'تفاعلات المشاهدين' : 'Story Reactions'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowReactionsList(false)}
+                      className="text-white/60 hover:text-white p-1"
+                      aria-label={language === 'ar' ? 'إغلاق' : 'Close'}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  {storyReactions.length === 0 ? (
+                    <p className="text-xs text-white/50 text-center py-2">
+                      {language === 'ar' ? 'لا توجد تفاعلات بعد' : 'No reactions yet'}
+                    </p>
+                  ) : (
+                    storyReactions.map((entry) => (
+                      <div key={entry.userId} className="flex items-center justify-between text-xs text-white py-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-6 h-6 rounded-full overflow-hidden border border-white/20 shrink-0">
+                            <UserAvatar
+                              src={entry.userPhotoURL}
+                              username={entry.username}
+                              iconSize={12}
+                            />
+                          </div>
+                          <span className="font-semibold truncate">{entry.username || 'user'}</span>
+                        </div>
+                        <span className="text-base">{REACTION_MAP[entry.reaction].emoji}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowReactionsList((prev) => !prev)}
+                  className="min-h-[40px] px-3.5 py-2 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 text-white text-xs font-bold flex items-center gap-2 transition-all active:scale-95"
+                >
+                  {topStoryReactions.length > 0 ? (
+                    <span className="flex items-center -space-x-1 rtl:space-x-reverse">
+                      {topStoryReactions.map((item) => (
+                        <span key={item.meta.type} className="text-sm">{item.meta.emoji}</span>
+                      ))}
+                    </span>
+                  ) : (
+                    <Heart size={15} className="text-rose-400" />
+                  )}
+                  <span className="tabular-nums">
+                    {totalStoryReactionsCount}{' '}
+                    {language === 'ar' ? 'تفاعل' : totalStoryReactionsCount === 1 ? 'reaction' : 'reactions'}
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Reply & Reactions Bar (for viewers) */}
+          {!isOwner && user && (
+            <div className="space-y-2.5">
               <div className="flex items-center gap-2">
                 <input
                   type="text"
@@ -683,37 +941,82 @@ export default function StoryViewer({
                       ? `أرسل رسالة إلى ${currentStory.authorUsername}...`
                       : `Send message to ${currentStory.authorUsername}...`
                   }
-                  className="flex-1 bg-white/15 border border-white/20 rounded-full py-2 px-4 text-xs text-white placeholder-white/60 focus:outline-none focus:ring-1 focus:ring-white focus:bg-white/25 transition-all"
+                  className="flex-1 bg-white/15 border border-white/20 rounded-full py-2.5 px-4 text-xs text-white placeholder-white/60 focus:outline-none focus:ring-1 focus:ring-white focus:bg-white/25 transition-all"
                 />
+                {replyText.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => handleSendReply()}
+                    className="min-h-[40px] min-w-[40px] flex items-center justify-center bg-white text-slate-900 rounded-full hover:bg-slate-100 transition-all active:scale-95 shrink-0"
+                    title={language === 'ar' ? 'إرسال الرد' : 'Send reply'}
+                    aria-label={language === 'ar' ? 'إرسال الرد' : 'Send reply'}
+                  >
+                    <Send size={16} />
+                  </button>
+                )}
+
+                {/* Dedicated Persistent Story Like Button */}
                 <button
                   type="button"
-                  onClick={() => handleSendReply()}
-                  disabled={!replyText.trim()}
-                  className="p-2 bg-white text-slate-900 rounded-full hover:bg-slate-100 disabled:opacity-40 transition-all active:scale-95 shrink-0"
-                  title={language === 'ar' ? 'إرسال الرد' : 'Send reply'}
+                  onClick={() =>
+                    applyStoryReaction(currentUserReaction || 'heart')
+                  }
+                  aria-label={language === 'ar' ? 'إعجاب بالقصة' : 'Like story'}
+                  aria-pressed={Boolean(currentUserReaction)}
+                  className={`min-h-[40px] px-3 rounded-full border flex items-center gap-1.5 transition-all active:scale-90 shrink-0 ${
+                    currentUserReaction
+                      ? 'bg-rose-500/25 border-rose-400/70 text-rose-300'
+                      : 'bg-white/15 hover:bg-white/25 border-white/20 text-white'
+                  }`}
                 >
-                  <Send size={15} />
+                  {currentUserReaction && currentUserReaction !== 'heart' ? (
+                    <span className={`text-lg leading-none ${heartPopping ? 'animate-emoji-tap' : ''}`}>
+                      {REACTION_MAP[currentUserReaction].emoji}
+                    </span>
+                  ) : (
+                    <Heart
+                      size={18}
+                      className={`${heartPopping ? 'animate-heart-pop' : ''} ${
+                        currentUserReaction ? 'text-rose-500 fill-rose-500' : 'text-white'
+                      }`}
+                    />
+                  )}
+                  {totalStoryReactionsCount > 0 && (
+                    <span className="text-[11px] font-bold tabular-nums text-white">
+                      {totalStoryReactionsCount}
+                    </span>
+                  )}
                 </button>
               </div>
 
-              {/* Quick Reactions */}
-              <div className="flex items-center justify-around px-2 pt-1">
-                {[
-                  { emoji: '🔥', icon: Flame, text: '🔥' },
-                  { emoji: '❤️', icon: Heart, text: '❤️' },
-                  { emoji: '😂', icon: Laugh, text: '😂' },
-                  { emoji: '🎉', icon: PartyPopper, text: '🎉' },
-                ].map((item) => (
-                  <button
-                    key={item.emoji}
-                    type="button"
-                    onClick={() => handleSendReply(item.text)}
-                    className="p-1.5 text-base hover:scale-125 transition-transform active:scale-95"
-                    title={item.emoji}
-                  >
-                    {item.emoji}
-                  </button>
-                ))}
+              {/* Persistent Clickable Quick Reactions */}
+              <div className="flex items-center justify-between gap-1 px-1">
+                {REACTIONS.map((item) => {
+                  const isSelected = currentUserReaction === item.type;
+                  const count = derivedReactionCounts[item.type] || 0;
+                  return (
+                    <button
+                      key={item.type}
+                      type="button"
+                      onClick={() => applyStoryReaction(item.type)}
+                      aria-label={language === 'ar' ? item.labelAr : item.labelEn}
+                      aria-pressed={isSelected}
+                      title={language === 'ar' ? item.labelAr : item.labelEn}
+                      className={`min-h-[40px] flex-1 flex items-center justify-center gap-1 rounded-full transition-all active:scale-90 ${
+                        isSelected
+                          ? 'bg-white/25 ring-1 ring-white/60 scale-105'
+                          : 'hover:bg-white/15'
+                      }`}
+                    >
+                      <span className="text-lg leading-none">{item.emoji}</span>
+                      {count > 0 && (
+                        <span className="text-[10px] font-bold text-white/90 tabular-nums">
+                          {count}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
 
               {replySent && (
