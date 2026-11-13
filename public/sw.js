@@ -1,4 +1,4 @@
-const CACHE_NAME = 'instavibe-cache-v2';
+const CACHE_NAME = 'instavibe-cache-v4';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -13,7 +13,6 @@ const ASSETS_TO_CACHE = [
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
-      console.log('Service Worker: Caching core static assets');
       return cache.addAll(ASSETS_TO_CACHE);
     }).then(() => self.skipWaiting())
   );
@@ -26,7 +25,6 @@ self.addEventListener('activate', (event) => {
       return Promise.all(
         cacheNames.map((cache) => {
           if (cache !== CACHE_NAME) {
-            console.log('Service Worker: Clearing old cache:', cache);
             return caches.delete(cache);
           }
         })
@@ -42,6 +40,21 @@ self.addEventListener('fetch', (event) => {
 
   // Skip chrome-extension or non-http requests
   if (!url.protocol.startsWith('http')) return;
+
+  // Never intercept or cache Vite dev modules, scripts, pre-bundled deps, or non-GET requests
+  if (
+    request.method !== 'GET' ||
+    url.pathname.startsWith('/node_modules/') ||
+    url.pathname.startsWith('/src/') ||
+    url.pathname.startsWith('/@') ||
+    url.pathname.endsWith('.js') ||
+    url.pathname.endsWith('.mjs') ||
+    url.pathname.endsWith('.ts') ||
+    url.pathname.endsWith('.tsx') ||
+    url.searchParams.has('v')
+  ) {
+    return;
+  }
 
   // For HTML navigation requests, try network first, fallback to cached index.html
   if (request.mode === 'navigate' || request.headers.get('accept')?.includes('text/html')) {

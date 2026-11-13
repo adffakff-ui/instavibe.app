@@ -44,7 +44,7 @@ service cloud.firestore {
       return data.keys().hasAll(['authorId', 'mediaURL', 'mediaType'])
         && data.keys().hasOnly(['id', 'authorId', 'authorUsername', 'authorPhotoURL', 'mediaURL', 'mediaType', 'caption', 'tags', 'likesCount', 'reactionCounts', 'commentsCount', 'createdAt'])
         && data.authorId == request.auth.uid
-        && data.mediaURL is string && data.mediaURL.size() <= 1000
+        && data.mediaURL is string && data.mediaURL.size() >= 1 && data.mediaURL.size() <= 900000
         && data.mediaType in ['image', 'video']
         && (!('caption' in data) || data.caption == null || (data.caption is string && data.caption.size() <= 2200))
         && (!('tags' in data) || (data.tags is list && data.tags.size() <= 30 && (data.tags.size() == 0 || data.tags[0] is string)))
@@ -123,7 +123,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['userId', 'postId', 'authorId', 'authorUsername', 'authorPhotoURL', 'mediaURL', 'mediaType', 'caption', 'likesCount', 'commentsCount', 'savedAt'])
         && data.userId == request.auth.uid
         && isValidId(data.postId)
-        && data.mediaURL is string && data.mediaURL.size() <= 1000
+        && data.mediaURL is string && data.mediaURL.size() >= 1 && data.mediaURL.size() <= 900000
         && data.mediaType in ['image', 'video']
         && (!('authorId' in data) || data.authorId == null || isValidId(data.authorId))
         && (!('authorUsername' in data) || data.authorUsername == null || (data.authorUsername is string && data.authorUsername.size() <= 50))

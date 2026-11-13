@@ -752,11 +752,15 @@ export default function ReelsView({
       {/* Create Reel Modal */}
       {showCreateModal && (
         <div
-          className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
+          className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-in fade-in"
           onClick={() => setShowCreateModal(false)}
         >
-          <div className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
-            <PostCreation defaultMediaType="video" onClose={() => setShowCreateModal(false)} />
+          <div className="w-full max-w-lg my-auto" onClick={(e) => e.stopPropagation()}>
+            <PostCreation
+              defaultMediaType="video"
+              mode="reel"
+              onClose={() => setShowCreateModal(false)}
+            />
           </div>
         </div>
       )}

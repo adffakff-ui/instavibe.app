@@ -47,8 +47,19 @@ export function savePostDraft(draft: Omit<PostDraft, 'id' | 'updatedAt'> & { id?
       updatedDrafts = [draftToSave, ...drafts].slice(0, MAX_DRAFTS_PER_USER);
     }
 
-    localStorage.setItem(getUserStorageKey(draft.userId), JSON.stringify(updatedDrafts));
-    return draftToSave;
+    try {
+      localStorage.setItem(getUserStorageKey(draft.userId), JSON.stringify(updatedDrafts));
+      return draftToSave;
+    } catch {
+      // If quota exceeded (e.g. multiple gallery DataURLs), keep only the latest draft
+      try {
+        localStorage.setItem(getUserStorageKey(draft.userId), JSON.stringify([draftToSave]));
+        return draftToSave;
+      } catch (innerErr) {
+        console.error('Failed to save post draft due to storage quota:', innerErr);
+        return null;
+      }
+    }
   } catch (err) {
     console.error('Failed to save post draft:', err);
     return null;

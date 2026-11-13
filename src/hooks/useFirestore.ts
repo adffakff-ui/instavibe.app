@@ -82,11 +82,11 @@ export function useFirestore() {
         new Set(cleanCaption.match(/#[\p{L}\p{N}_]+/giu)?.map(t => t.slice(1).toLowerCase()) || [])
       ).slice(0, 30);
 
-      await addDoc(collection(db, 'posts'), {
+      const docRef = await addDoc(collection(db, 'posts'), {
         authorId: author.uid,
         authorUsername: author.username,
         authorPhotoURL: author.photoURL,
-        mediaURL: mediaURL.slice(0, 1000),
+        mediaURL: mediaURL.slice(0, 900000),
         mediaType,
         caption: cleanCaption,
         tags,
@@ -95,8 +95,9 @@ export function useFirestore() {
         commentsCount: 0,
         createdAt: serverTimestamp(),
       });
+      return docRef.id;
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, 'posts');
+      handleFirestoreError(error, OperationType.CREATE, 'posts', true);
     } finally {
       setLoading(false);
     }
@@ -119,7 +120,7 @@ export function useFirestore() {
         authorId: post.authorId || '',
         authorUsername: (post.authorUsername || 'user').slice(0, 50),
         authorPhotoURL: (post.authorPhotoURL || '').slice(0, 900000),
-        mediaURL: (post.mediaURL || '').slice(0, 1000),
+        mediaURL: (post.mediaURL || '').slice(0, 900000),
         mediaType: post.mediaType === 'video' ? 'video' : 'image',
         caption: (post.caption || '').slice(0, 2200),
         likesCount: typeof post.likesCount === 'number' ? Math.max(0, post.likesCount) : 0,

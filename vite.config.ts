@@ -7,6 +7,42 @@ import {VitePWA} from 'vite-plugin-pwa';
 export default defineConfig(() => {
   return {
     plugins: [
+      {
+        name: 'dev-sw-cleanup',
+        apply: 'serve',
+        transformIndexHtml() {
+          return [
+            {
+              tag: 'script',
+              attrs: { type: 'text/javascript' },
+              injectTo: 'head-prepend',
+              children: `
+(function() {
+  if (!('serviceWorker' in navigator)) return;
+  var hadController = Boolean(navigator.serviceWorker.controller);
+  Promise.all([
+    navigator.serviceWorker.getRegistrations().then(function(regs) {
+      return Promise.all(regs.map(function(r) { return r.unregister(); }));
+    }),
+    'caches' in window
+      ? caches.keys().then(function(keys) {
+          return Promise.all(keys.map(function(k) { return caches.delete(k); }));
+        })
+      : Promise.resolve()
+  ]).then(function() {
+    if (hadController && !sessionStorage.getItem('__dev_sw_reloaded__')) {
+      sessionStorage.setItem('__dev_sw_reloaded__', '1');
+      window.location.reload();
+    } else {
+      sessionStorage.removeItem('__dev_sw_reloaded__');
+    }
+  }).catch(function() {});
+})();
+              `.trim(),
+            },
+          ];
+        },
+      },
       react(),
       tailwindcss(),
       VitePWA({
@@ -64,6 +100,37 @@ export default defineConfig(() => {
       alias: {
         '@': path.resolve(__dirname, '.'),
       },
+      dedupe: [
+        'react',
+        'react-dom',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
+        'firebase/app',
+        'firebase/auth',
+        'firebase/firestore',
+        '@firebase/app',
+        '@firebase/component',
+        '@firebase/firestore',
+        '@firebase/auth',
+      ],
+    },
+    optimizeDeps: {
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
+        'lucide-react',
+        'clsx',
+        'tailwind-merge',
+        'date-fns',
+        'date-fns/locale',
+        'motion/react',
+        'firebase/app',
+        'firebase/auth',
+        'firebase/firestore',
+      ],
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
