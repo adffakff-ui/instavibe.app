@@ -50,6 +50,7 @@ import {
   ChevronDown,
 } from 'lucide-react';
 import { db } from '../lib/firebase';
+import { getStoredMediaPermissions } from '../lib/mediaPermissions';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
 import UserAvatar from './UserAvatar';
@@ -441,6 +442,26 @@ export default function LiveView({
         return null;
       }
 
+      const storedPerms = getStoredMediaPermissions();
+      if (storedPerms) {
+        if (targetSource === 'camera' && !storedPerms.camera) {
+          setMediaError(
+            isAr
+              ? 'إذن الكاميرا غير مفعّل داخل التطبيق. يمكنك تفعيله من الإعدادات > الخصوصية > أذونات الوصول.'
+              : 'Camera access is disabled in app settings. Enable it in Settings > Privacy > Access Permissions.'
+          );
+          return null;
+        }
+        if (targetSource === 'audio' && !storedPerms.microphone) {
+          setMediaError(
+            isAr
+              ? 'إذن الميكروفون غير مفعّل داخل التطبيق. يمكنك تفعيله من الإعدادات > الخصوصية > أذونات الوصول.'
+              : 'Microphone access is disabled in app settings. Enable it in Settings > Privacy > Access Permissions.'
+          );
+          return null;
+        }
+      }
+
       try {
         let stream: MediaStream;
         if (targetSource === 'screen') {
@@ -448,7 +469,7 @@ export default function LiveView({
             video: { frameRate: { ideal: 30 } },
             audio: true,
           });
-          if (displayStream.getAudioTracks().length === 0) {
+          if (displayStream.getAudioTracks().length === 0 && (!storedPerms || storedPerms.microphone)) {
             try {
               const micStream = await navigator.mediaDevices.getUserMedia({
                 audio: { echoCancellation: true, noiseSuppression: true },
@@ -470,16 +491,19 @@ export default function LiveView({
             audio: { echoCancellation: true, noiseSuppression: true },
           });
         } else {
+          const allowMic = !storedPerms || storedPerms.microphone;
           stream = await navigator.mediaDevices.getUserMedia({
             video: {
               facingMode: targetFacing,
               width: { ideal: 1280 },
               height: { ideal: 720 },
             },
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-            },
+            audio: allowMic
+              ? {
+                  echoCancellation: true,
+                  noiseSuppression: true,
+                }
+              : false,
           });
         }
         setSourceType(targetSource);

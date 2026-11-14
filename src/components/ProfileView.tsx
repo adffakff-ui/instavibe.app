@@ -68,7 +68,7 @@ export default function ProfileView({
   onOpenProfile?: (uid: string) => void;
   onSelectTag?: (tag: string) => void;
 }) {
-  const { user: currentUser, profile: currentProfile, isFirebaseAuthenticated, signIn, followers, following, blockedUsers, language, t } = useAuth();
+  const { user: currentUser, profile: currentProfile, isFirebaseAuthenticated, followers, following, blockedUsers, language, t } = useAuth();
   const {
     removeFollower,
     getOrCreateConversation,
@@ -746,28 +746,6 @@ export default function ProfileView({
 
   return (
     <div className="max-w-screen-md mx-auto pb-20 space-y-6">
-      {isOwnProfile && !isFirebaseAuthenticated && (
-        <div className="mx-4 md:mx-0 p-3.5 rounded-2xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="text-xs text-purple-900 dark:text-purple-200">
-            <p className="font-bold">
-              {language === 'ar' ? 'أنت تتصفح بوضع الزائر التجريبي' : 'Guest Trial Mode'}
-            </p>
-            <p className="opacity-80 mt-0.5">
-              {language === 'ar'
-                ? 'سجّل الدخول عبر Google لحفظ منشوراتك ومزامنة محفوظاتك في السحابة.'
-                : 'Sign in with Google to sync your profile, posts, and private bookmarks.'}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={signIn}
-            className="min-h-[38px] px-4 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shrink-0 transition-colors shadow-sm"
-          >
-            {language === 'ar' ? 'تسجيل الدخول عبر Google' : 'Sign in with Google'}
-          </button>
-        </div>
-      )}
-
       {/* Profile Header */}
       <div className="flex flex-col md:flex-row items-center md:items-start gap-8 px-4 md:px-0">
         <div className="w-24 h-24 md:w-40 md:h-40 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100 dark:bg-slate-800">

@@ -119,7 +119,7 @@ export default function Navigation({
 
       {/* Desktop Sidebar */}
       <nav className="hidden md:flex fixed top-0 start-0 bottom-0 z-50 w-20 lg:w-64 flex-col bg-white dark:bg-slate-900 border-e border-slate-200 dark:border-slate-800 p-4">
-        <div className="flex items-center justify-between mb-8 px-4">
+        <div className="flex flex-col lg:flex-row items-center lg:justify-between gap-3 lg:gap-2 mb-6 lg:mb-8 px-1 lg:px-3">
           <div
             className="hidden lg:block text-2xl font-bold cursor-pointer bg-gradient-to-r from-purple-600 to-rose-500 bg-clip-text text-transparent whitespace-nowrap"
             onClick={() => setView('feed')}
@@ -127,7 +127,7 @@ export default function Navigation({
             InstaVibe
           </div>
           <div
-            className="lg:hidden text-xl font-bold cursor-pointer"
+            className="lg:hidden text-xl font-bold cursor-pointer bg-gradient-to-r from-purple-600 to-rose-500 bg-clip-text text-transparent"
             onClick={() => setView('feed')}
           >
             IV
@@ -137,7 +137,7 @@ export default function Navigation({
           <button
             type="button"
             onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
-            className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0"
             title="Switch Language / تغيير اللغة"
           >
             <Globe size={15} />

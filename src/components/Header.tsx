@@ -41,13 +41,13 @@ export default function Header({
 
   return (
     <header className="fixed top-0 inset-x-0 md:ps-20 lg:ps-64 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 h-14 md:h-16">
-      <div className="max-w-screen-xl mx-auto flex items-center justify-between h-full px-3 sm:px-5 gap-2">
+      <div className="max-w-screen-xl mx-auto flex items-center justify-between h-full px-2 min-[400px]:px-3 sm:px-5 gap-1 min-[400px]:gap-2">
         {/* Brand (mobile) + Live Broadcast Button */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0 min-w-0">
+        <div className="flex items-center gap-1.5 min-[400px]:gap-2 sm:gap-3 min-w-0">
           <button
             type="button"
             onClick={() => setView('feed')}
-            className="text-lg sm:text-xl font-extrabold tracking-tight cursor-pointer shrink-0 whitespace-nowrap bg-gradient-to-r from-purple-600 to-rose-500 bg-clip-text text-transparent md:hidden focus:outline-none"
+            className="text-[15px] min-[380px]:text-base sm:text-xl font-extrabold tracking-tight cursor-pointer shrink-0 whitespace-nowrap bg-gradient-to-r from-purple-600 to-rose-500 bg-clip-text text-transparent md:hidden focus:outline-none"
           >
             InstaVibe
           </button>
@@ -57,7 +57,7 @@ export default function Header({
             onClick={() => setView('live')}
             aria-label={t('live')}
             title={t('live')}
-            className={`min-h-[38px] sm:min-h-[42px] px-2.5 sm:px-3.5 rounded-xl flex items-center gap-1.5 text-xs font-bold transition-colors active:scale-95 whitespace-nowrap shrink-0 ${
+            className={`h-9 sm:h-10 px-2 min-[400px]:px-2.5 sm:px-3.5 rounded-xl flex items-center justify-center gap-1 sm:gap-1.5 text-[11px] sm:text-xs font-bold transition-colors active:scale-95 whitespace-nowrap shrink-0 ${
               currentView === 'live'
                 ? 'bg-rose-600 text-white shadow-sm'
                 : activeLiveCount > 0
@@ -65,11 +65,12 @@ export default function Header({
                 : 'bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:text-rose-600 dark:hover:text-rose-400'
             }`}
           >
-            <Radio size={15} className={currentView === 'live' ? 'text-white' : 'text-rose-600 dark:text-rose-400'} />
-            <span>{t('live')}</span>
+            <Radio size={14} className={`shrink-0 ${currentView === 'live' ? 'text-white' : 'text-rose-600 dark:text-rose-400'}`} />
+            <span className="min-[430px]:hidden">{language === 'ar' ? 'مباشر' : 'Live'}</span>
+            <span className="hidden min-[430px]:inline">{t('live')}</span>
             {activeLiveCount > 0 && (
               <span
-                className={`tabular-nums text-[10px] font-extrabold px-1.5 py-0.5 rounded leading-none ${
+                className={`tabular-nums text-[10px] font-extrabold px-1 py-0.5 rounded leading-none ${
                   currentView === 'live' ? 'bg-white/25 text-white' : 'bg-rose-600 text-white'
                 }`}
               >
@@ -80,7 +81,7 @@ export default function Header({
         </div>
 
         {/* Clean Action Bar */}
-        <div className="flex items-center gap-1 sm:gap-2 ms-auto shrink-0">
+        <div className="flex items-center gap-0.5 min-[390px]:gap-1.5 sm:gap-2 ms-auto shrink-0">
           {!isInstalled && onOpenInstall && (
             <button
               type="button"
@@ -93,7 +94,7 @@ export default function Header({
               }}
               aria-label={language === 'ar' ? 'تثبيت التطبيق' : 'Install App'}
               title={language === 'ar' ? 'تثبيت التطبيق أو تحميل حزمة APK' : 'Install App / Get APK'}
-              className="min-h-[38px] sm:min-h-[42px] px-2.5 sm:px-3.5 flex items-center justify-center gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-colors active:scale-95 whitespace-nowrap shadow-sm shrink-0"
+              className="h-9 sm:h-10 px-2 min-[400px]:px-2.5 sm:px-3.5 flex items-center justify-center gap-1 sm:gap-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-[11px] sm:text-xs font-bold transition-colors active:scale-95 whitespace-nowrap shadow-sm shrink-0"
             >
               <Download size={14} className="shrink-0" />
               <span className="sm:hidden">{language === 'ar' ? 'تثبيت' : 'Install'}</span>
@@ -107,13 +108,13 @@ export default function Header({
             onClick={() => setView('discover')}
             aria-label={t('discover')}
             title={t('discover')}
-            className={`min-h-[40px] min-w-[40px] md:px-3.5 flex items-center justify-center gap-1.5 rounded-xl transition-colors active:scale-95 whitespace-nowrap ${
+            className={`h-9 w-8 min-[390px]:w-9 sm:h-10 sm:w-10 md:w-auto md:px-3.5 flex items-center justify-center gap-1.5 rounded-xl transition-colors active:scale-95 whitespace-nowrap shrink-0 ${
               currentView === 'discover'
                 ? 'text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/40 font-bold'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            <Sparkles size={18} />
+            <Sparkles size={17} className="shrink-0" />
             <span className="hidden md:inline text-xs font-semibold">{t('discover')}</span>
           </button>
 
@@ -123,13 +124,13 @@ export default function Header({
             onClick={() => setView('analytics')}
             aria-label={t('analytics')}
             title={t('analytics')}
-            className={`min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl transition-colors md:hidden active:scale-95 ${
+            className={`h-9 w-8 min-[390px]:w-9 sm:h-10 sm:w-10 flex items-center justify-center rounded-xl transition-colors md:hidden active:scale-95 shrink-0 ${
               currentView === 'analytics'
                 ? 'text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800'
                 : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            <BarChart3 size={18} />
+            <BarChart3 size={17} className="shrink-0" />
           </button>
 
           {/* Mobile Language Toggle */}
@@ -138,9 +139,9 @@ export default function Header({
             onClick={() => setLanguage(language === 'ar' ? 'en' : 'ar')}
             aria-label={language === 'ar' ? 'تغيير اللغة' : 'Switch Language'}
             title={language === 'ar' ? 'تغيير اللغة' : 'Switch Language'}
-            className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors md:hidden active:scale-95"
+            className="h-9 w-8 min-[390px]:w-9 sm:h-10 sm:w-10 flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors md:hidden active:scale-95 shrink-0"
           >
-            <Globe size={18} />
+            <Globe size={17} className="shrink-0" />
           </button>
 
           {/* Mobile Messages Button */}
@@ -149,13 +150,13 @@ export default function Header({
             onClick={() => setView('messages')}
             aria-label={t('messages')}
             title={t('messages')}
-            className={`min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl transition-colors active:scale-95 md:hidden ${
+            className={`h-9 w-8 min-[390px]:w-9 sm:h-10 sm:w-10 flex items-center justify-center rounded-xl transition-colors active:scale-95 md:hidden shrink-0 ${
               currentView === 'messages'
                 ? 'text-slate-900 dark:text-white bg-slate-100 dark:bg-slate-800'
                 : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
             }`}
           >
-            <MessageCircle size={18} />
+            <MessageCircle size={17} className="shrink-0" />
           </button>
 
           {/* Desktop Profile Avatar Shortcut */}
@@ -170,7 +171,7 @@ export default function Header({
             }}
             aria-label={t('profile')}
             title={t('profile')}
-            className={`hidden md:flex min-h-[42px] min-w-[42px] items-center justify-center rounded-xl transition-colors active:scale-95 ${
+            className={`hidden md:flex h-10 w-10 items-center justify-center rounded-xl transition-colors active:scale-95 shrink-0 ${
               currentView === 'profile'
                 ? 'bg-slate-100 dark:bg-slate-800'
                 : 'hover:bg-slate-100 dark:hover:bg-slate-800'

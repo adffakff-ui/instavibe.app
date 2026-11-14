@@ -18,12 +18,20 @@ import {
   Share2,
   Download,
   Trash2,
+  Mic,
+  ShieldCheck,
 } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import {
+  BrowserPermissionState,
+  getStoredMediaPermissions,
+  queryBrowserPermission,
+  saveStoredMediaPermissions,
+} from '../lib/mediaPermissions';
 import UserAvatar from './UserAvatar';
 
 export type SettingsTab = 'general' | 'profile' | 'privacy';
@@ -68,6 +76,14 @@ export default function SettingsModal({
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
 
+  const [showAccessModal, setShowAccessModal] = useState(false);
+  const [cameraAccess, setCameraAccess] = useState(false);
+  const [micAccess, setMicAccess] = useState(false);
+  const [cameraBrowserState, setCameraBrowserState] = useState<BrowserPermissionState>('unknown');
+  const [micBrowserState, setMicBrowserState] = useState<BrowserPermissionState>('unknown');
+  const [applyingAccess, setApplyingAccess] = useState(false);
+  const [accessModalError, setAccessModalError] = useState<string | null>(null);
+
   const [blockedProfiles, setBlockedProfiles] = useState<BlockedUserItem[]>([]);
   const [loadingBlocked, setLoadingBlocked] = useState(false);
   const [unblockingId, setUnblockingId] = useState<string | null>(null);
@@ -80,8 +96,37 @@ export default function SettingsModal({
       setFeedback(null);
       setConfirmLogout(false);
       setConfirmReset(false);
+      setShowAccessModal(false);
+      setAccessModalError(null);
     }
   }, [isOpen, initialTab]);
+
+  useEffect(() => {
+    if (!isOpen || activeTab !== 'privacy') return;
+    let cancelled = false;
+    const syncPermissions = async () => {
+      const [camState, micState] = await Promise.all([
+        queryBrowserPermission('camera'),
+        queryBrowserPermission('microphone'),
+      ]);
+      if (cancelled) return;
+      setCameraBrowserState(camState);
+      setMicBrowserState(micState);
+
+      const stored = getStoredMediaPermissions();
+      if (stored) {
+        setCameraAccess(stored.camera && camState !== 'denied');
+        setMicAccess(stored.microphone && micState !== 'denied');
+      } else {
+        setCameraAccess(camState === 'granted');
+        setMicAccess(micState === 'granted');
+      }
+    };
+    syncPermissions();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, activeTab]);
 
   useEffect(() => {
     if (isOpen && profile) {
@@ -95,11 +140,17 @@ export default function SettingsModal({
   useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (showAccessModal) {
+          setShowAccessModal(false);
+        } else {
+          onClose();
+        }
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, showAccessModal]);
 
   useEffect(() => {
     if (!isOpen || activeTab !== 'privacy') return;
@@ -278,6 +329,152 @@ export default function SettingsModal({
   const handleConfirmLogout = async () => {
     await logOut();
     onClose();
+  };
+
+  const handleOpenAccessRequest = async () => {
+    setAccessModalError(null);
+    setShowAccessModal(true);
+    const [camState, micState] = await Promise.all([
+      queryBrowserPermission('camera'),
+      queryBrowserPermission('microphone'),
+    ]);
+    setCameraBrowserState(camState);
+    setMicBrowserState(micState);
+
+    const stored = getStoredMediaPermissions();
+    if (stored) {
+      setCameraAccess(stored.camera && camState !== 'denied');
+      setMicAccess(stored.microphone && micState !== 'denied');
+    } else {
+      setCameraAccess(camState === 'granted');
+      setMicAccess(micState === 'granted');
+    }
+  };
+
+  const handleApplyAccessPermissions = async () => {
+    setAccessModalError(null);
+    setApplyingAccess(true);
+
+    try {
+      if (!cameraAccess && !micAccess) {
+        saveStoredMediaPermissions({ camera: false, microphone: false });
+        setShowAccessModal(false);
+        setFeedback({
+          type: 'success',
+          text:
+            language === 'ar'
+              ? 'تم إيقاف أذونات الكاميرا والميكروفون للتطبيق.'
+              : 'Camera and microphone access disabled for the app.',
+        });
+        return;
+      }
+
+      if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+        saveStoredMediaPermissions({ camera: cameraAccess, microphone: micAccess });
+        setShowAccessModal(false);
+        setFeedback({
+          type: 'error',
+          text:
+            language === 'ar'
+              ? 'المتصفح الحالي لا يدعم طلب أذونات الوسائط مباشرة.'
+              : 'Your browser does not support requesting media permissions directly.',
+        });
+        return;
+      }
+
+      let grantedCam = false;
+      let grantedMic = false;
+      let lastErrorName = '';
+
+      if (cameraAccess && micAccess) {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          stream.getTracks().forEach((t) => t.stop());
+          grantedCam = true;
+          grantedMic = true;
+        } catch (err: any) {
+          lastErrorName = err?.name || '';
+          // Try requesting individually in case only one hardware device exists or is permitted
+          try {
+            const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            camStream.getTracks().forEach((t) => t.stop());
+            grantedCam = true;
+          } catch (camErr: any) {
+            lastErrorName = camErr?.name || lastErrorName;
+          }
+          try {
+            const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            micStream.getTracks().forEach((t) => t.stop());
+            grantedMic = true;
+          } catch (micErr: any) {
+            lastErrorName = micErr?.name || lastErrorName;
+          }
+        }
+      } else if (cameraAccess) {
+        try {
+          const camStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          camStream.getTracks().forEach((t) => t.stop());
+          grantedCam = true;
+        } catch (err: any) {
+          lastErrorName = err?.name || '';
+        }
+      } else if (micAccess) {
+        try {
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          micStream.getTracks().forEach((t) => t.stop());
+          grantedMic = true;
+        } catch (err: any) {
+          lastErrorName = err?.name || '';
+        }
+      }
+
+      const [nextCamState, nextMicState] = await Promise.all([
+        queryBrowserPermission('camera'),
+        queryBrowserPermission('microphone'),
+      ]);
+      setCameraBrowserState(nextCamState);
+      setMicBrowserState(nextMicState);
+
+      const finalCam = cameraAccess && grantedCam;
+      const finalMic = micAccess && grantedMic;
+      setCameraAccess(finalCam);
+      setMicAccess(finalMic);
+      saveStoredMediaPermissions({ camera: finalCam, microphone: finalMic });
+
+      if ((cameraAccess && !grantedCam) || (micAccess && !grantedMic)) {
+        if (lastErrorName === 'NotAllowedError' || lastErrorName === 'PermissionDeniedError') {
+          setAccessModalError(
+            language === 'ar'
+              ? 'تم رفض الإذن من المتصفح. يرجى السماح بالوصول من إعدادات الموقع في المتصفح ثم المحاولة مجدداً.'
+              : 'Permission was denied by the browser. Please allow access in your browser site settings and try again.'
+          );
+        } else if (lastErrorName === 'NotFoundError' || lastErrorName === 'DevicesNotFoundError') {
+          setAccessModalError(
+            language === 'ar'
+              ? 'لم يتم العثور على جهاز كاميرا أو ميكروفون متصل.'
+              : 'No connected camera or microphone device was detected.'
+          );
+        } else {
+          setAccessModalError(
+            language === 'ar'
+              ? 'تعذر تفعيل بعض الأذونات المطلوبة. تحقق من صلاحيات المتصفح.'
+              : 'Could not enable all requested permissions. Check your browser permissions.'
+          );
+        }
+        return;
+      }
+
+      setShowAccessModal(false);
+      setFeedback({
+        type: 'success',
+        text:
+          language === 'ar'
+            ? 'تم تطبيق أذونات الوصول بنجاح.'
+            : 'Access permissions applied successfully.',
+      });
+    } finally {
+      setApplyingAccess(false);
+    }
   };
 
   const handleResetAppData = async () => {
@@ -664,6 +861,46 @@ export default function SettingsModal({
 
               <div className="border-t border-slate-100 dark:border-slate-800" />
 
+              {/* Access Request / Device Permissions Section */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    {language === 'ar' ? 'أذونات الوصول' : 'Access Permissions'}
+                  </h3>
+                  <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    {cameraAccess || micAccess
+                      ? language === 'ar'
+                        ? `${cameraAccess ? 'الكاميرا' : ''}${cameraAccess && micAccess ? ' • ' : ''}${micAccess ? 'الميكروفون' : ''} مفعّل`
+                        : `${cameraAccess ? 'Camera' : ''}${cameraAccess && micAccess ? ' • ' : ''}${micAccess ? 'Microphone' : ''} active`
+                      : language === 'ar'
+                      ? 'غير مفعّل'
+                      : 'Disabled'}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {language === 'ar'
+                    ? 'التحكم في أذونات الكاميرا والميكروفون للبث المباشر والمحتوى.'
+                    : 'Manage Camera and Microphone access permissions for Live streams and media.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={handleOpenAccessRequest}
+                  className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-900 dark:text-white text-sm font-semibold flex items-center justify-between gap-3 transition-colors border border-slate-200/80 dark:border-slate-700"
+                >
+                  <span className="flex items-center gap-2.5 min-w-0">
+                    <ShieldCheck size={17} className="text-purple-600 dark:text-purple-400 shrink-0" />
+                    <span className="truncate">
+                      {language === 'ar' ? 'طلب أذونات الوصول (الكاميرا والميكروفون)' : 'Access Request (Camera & Mic)'}
+                    </span>
+                  </span>
+                  <span className="text-xs font-bold text-purple-600 dark:text-purple-400 shrink-0">
+                    {language === 'ar' ? 'فتح' : 'Open'}
+                  </span>
+                </button>
+              </div>
+
+              <div className="border-t border-slate-100 dark:border-slate-800" />
+
               {/* Blocked Users */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
@@ -809,6 +1046,163 @@ export default function SettingsModal({
           )}
         </div>
       </div>
+
+      {/* Standalone Access Request Modal */}
+      {showAccessModal && (
+        <div
+          className="fixed inset-0 z-[130] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in"
+          onClick={() => !applyingAccess && setShowAccessModal(false)}
+          role="dialog"
+          aria-modal="true"
+          aria-label={language === 'ar' ? 'طلب الوصول' : 'Access request'}
+        >
+          <div
+            className="w-full max-w-sm bg-white dark:bg-[#242528] text-slate-900 dark:text-white rounded-3xl shadow-2xl border border-slate-200 dark:border-white/10 p-6 space-y-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-lg font-bold tracking-tight">
+                {language === 'ar' ? 'طلب الوصول' : 'Access request'}
+              </h3>
+              <button
+                type="button"
+                disabled={applyingAccess}
+                onClick={() => setShowAccessModal(false)}
+                aria-label={language === 'ar' ? 'إغلاق' : 'Close'}
+                className="min-h-[36px] min-w-[36px] flex items-center justify-center rounded-full text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 transition-colors disabled:opacity-50"
+              >
+                <X size={19} />
+              </button>
+            </div>
+
+            <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+              {language === 'ar'
+                ? 'يطلب التطبيق الوصول إلى الأذونات التالية:'
+                : 'The app requests access to the following permissions:'}
+            </p>
+
+            {/* Permission Toggles */}
+            <div className="space-y-3">
+              {/* Camera Row */}
+              <div className="flex items-center justify-between gap-3 px-4 py-3.5 rounded-2xl border border-slate-200 dark:border-white/15 bg-slate-50 dark:bg-white/[0.03]">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Camera size={18} className="text-slate-500 dark:text-slate-300 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                      {language === 'ar' ? 'الكاميرا' : 'Camera'}
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {cameraBrowserState === 'denied'
+                        ? language === 'ar'
+                          ? 'محظور من إعدادات المتصفح'
+                          : 'Blocked in browser settings'
+                        : cameraAccess
+                        ? language === 'ar'
+                          ? 'مفعّل'
+                          : 'Enabled'
+                        : language === 'ar'
+                        ? 'غير مفعّل'
+                        : 'Disabled'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={cameraAccess}
+                  aria-label={language === 'ar' ? 'إذن الكاميرا' : 'Camera permission'}
+                  dir="ltr"
+                  disabled={applyingAccess}
+                  onClick={() => {
+                    setAccessModalError(null);
+                    setCameraAccess((prev) => !prev);
+                  }}
+                  className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border-2 transition-colors focus:outline-none disabled:opacity-50 ${
+                    cameraAccess
+                      ? 'bg-purple-600 border-purple-600'
+                      : 'bg-slate-300 dark:bg-[#3a3b40] border-slate-400 dark:border-slate-500'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                      cameraAccess ? 'translate-x-5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Microphone Row */}
+              <div className="flex items-center justify-between gap-3 px-4 py-3.5 rounded-2xl border border-slate-200 dark:border-white/15 bg-slate-50 dark:bg-white/[0.03]">
+                <div className="flex items-center gap-3 min-w-0">
+                  <Mic size={18} className="text-slate-500 dark:text-slate-300 shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                      {language === 'ar' ? 'الميكروفون' : 'Microphone'}
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      {micBrowserState === 'denied'
+                        ? language === 'ar'
+                          ? 'محظور من إعدادات المتصفح'
+                          : 'Blocked in browser settings'
+                        : micAccess
+                        ? language === 'ar'
+                          ? 'مفعّل'
+                          : 'Enabled'
+                        : language === 'ar'
+                        ? 'غير مفعّل'
+                        : 'Disabled'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={micAccess}
+                  aria-label={language === 'ar' ? 'إذن الميكروفون' : 'Microphone permission'}
+                  dir="ltr"
+                  disabled={applyingAccess}
+                  onClick={() => {
+                    setAccessModalError(null);
+                    setMicAccess((prev) => !prev);
+                  }}
+                  className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer items-center rounded-full border-2 transition-colors focus:outline-none disabled:opacity-50 ${
+                    micAccess
+                      ? 'bg-purple-600 border-purple-600'
+                      : 'bg-slate-300 dark:bg-[#3a3b40] border-slate-400 dark:border-slate-500'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                      micAccess ? 'translate-x-5' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            {accessModalError && (
+              <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800/70 text-red-600 dark:text-red-300 text-xs font-medium flex items-start gap-2">
+                <AlertCircle size={15} className="shrink-0 mt-0.5" />
+                <span>{accessModalError}</span>
+              </div>
+            )}
+
+            {/* Apply Action */}
+            <div className="flex justify-end pt-1">
+              <button
+                type="button"
+                disabled={applyingAccess}
+                onClick={handleApplyAccessPermissions}
+                className="min-h-[42px] px-6 py-2 rounded-full bg-slate-900 dark:bg-white/15 hover:bg-slate-800 dark:hover:bg-white/25 text-white text-sm font-semibold flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+              >
+                {applyingAccess && <Loader2 size={15} className="animate-spin" />}
+                <span>{language === 'ar' ? 'تطبيق' : 'Apply'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

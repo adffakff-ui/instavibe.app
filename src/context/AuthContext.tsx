@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut, signInAnonymously } from 'firebase/auth';
+import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 import { auth, db } from '../lib/firebase';
 import { doc, getDoc, setDoc, serverTimestamp, query, collection, onSnapshot } from 'firebase/firestore';
 
@@ -111,7 +111,6 @@ interface AuthContextType {
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
   t: (key: string) => string;
   signIn: () => Promise<void>;
-  signInAsGuest: () => Promise<void>;
   logOut: () => Promise<void>;
 }
 
@@ -193,6 +192,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } catch {
             // ignore storage errors
           }
+
+          if (firebaseUser.isAnonymous) {
+            signOut(auth).catch(() => {});
+            setIsFirebaseAuthenticated(false);
+            setUser(null);
+            setProfile(null);
+            setFollowing([]);
+            setFollowers([]);
+            setBlockedUsers([]);
+            setLoading(false);
+            return;
+          }
+
           setUser(firebaseUser);
           setIsFirebaseAuthenticated(true);
           setAuthError(null);
@@ -259,39 +271,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             (err) => console.warn('Blocked users listener notice:', err)
           );
         } else {
-          setIsFirebaseAuthenticated(false);
-          const guestDataStr = safeGetStorage('instavibe_guest_session');
-          if (guestDataStr) {
-            try {
-              const guestData = JSON.parse(guestDataStr);
-              if (guestData && guestData.uid) {
-                const guestUser = {
-                  uid: guestData.uid,
-                  email: guestData.email,
-                  displayName: guestData.displayName,
-                  photoURL: guestData.photoURL,
-                  emailVerified: true,
-                  isAnonymous: true,
-                } as unknown as User;
-                setUser(guestUser);
-                setProfile({
-                  uid: guestData.uid,
-                  username: 'guest_' + guestData.uid.slice(-6),
-                  fullName: guestData.displayName,
-                  email: guestData.email,
-                  photoURL: guestData.photoURL,
-                  bio: language === 'ar' ? 'حساب تجريبي / زائر' : 'Guest / Trial Account',
-                });
-                setFollowing([]);
-                setFollowers([]);
-                setBlockedUsers([]);
-                setLoading(false);
-                return;
-              }
-            } catch {
-              // ignore invalid guest session JSON
-            }
+          try {
+            window.localStorage.removeItem('instavibe_guest_session');
+          } catch {
+            // ignore storage errors
           }
+          setIsFirebaseAuthenticated(false);
           setUser(null);
           setProfile(null);
           setFollowing([]);
@@ -320,11 +305,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
-      try {
-        window.localStorage.removeItem('instavibe_guest_session');
-      } catch {
-        // ignore storage errors
-      }
     } catch (error: any) {
       const code = error?.code || '';
       if (code === 'auth/popup-blocked') {
@@ -349,63 +329,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signInAsGuest = async () => {
-    setAuthError(null);
-    try {
-      await signInAnonymously(auth);
-    } catch (error: any) {
-      console.warn('Anonymous auth fallback notice:', error);
-      const guestId = 'guest_' + Math.random().toString(36).slice(2, 10);
-      const guestUser = {
-        uid: guestId,
-        email: 'guest@instavibe.local',
-        displayName: language === 'ar' ? 'زائر انستافايب' : 'InstaVibe Guest',
-        photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-        emailVerified: true,
-        isAnonymous: true,
-        providerData: [],
-        metadata: {},
-        refreshToken: '',
-        tenantId: null,
-        delete: async () => {},
-        getIdToken: async () => 'mock-token',
-        getIdTokenResult: async () => ({ token: 'mock-token', authTime: '', issuedAtTime: '', expirationTime: '', signInProvider: null, signInSecondFactor: null, claims: {} }),
-        reload: async () => {},
-        toJSON: () => ({}),
-      } as unknown as User;
-
-      safeSetStorage('instavibe_guest_session', JSON.stringify({
-        uid: guestUser.uid,
-        email: guestUser.email,
-        displayName: guestUser.displayName,
-        photoURL: guestUser.photoURL
-      }));
-      setIsFirebaseAuthenticated(false);
-      setUser(guestUser);
-      setProfile({
-        uid: guestUser.uid,
-        username: 'guest_' + guestId.slice(-6),
-        fullName: guestUser.displayName,
-        email: guestUser.email,
-        photoURL: guestUser.photoURL,
-        bio: language === 'ar' ? 'حساب تجريبي / زائر' : 'Guest / Trial Account',
-      });
-      setLoading(false);
-    }
-  };
-
   const logOut = async () => {
-    localStorage.removeItem('instavibe_guest_session');
     try {
       await signOut(auth);
-    } catch (e) {}
+    } catch {
+      // ignore signOut errors
+    }
     setIsFirebaseAuthenticated(false);
     setUser(null);
     setProfile(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, isFirebaseAuthenticated, following, followers, blockedUsers, loading, authError, clearAuthError, language, setLanguage, theme, setTheme, t, signIn, signInAsGuest, logOut }}>
+    <AuthContext.Provider value={{ user, profile, isFirebaseAuthenticated, following, followers, blockedUsers, loading, authError, clearAuthError, language, setLanguage, theme, setTheme, t, signIn, logOut }}>
       {children}
     </AuthContext.Provider>
   );
