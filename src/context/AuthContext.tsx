@@ -1,5 +1,19 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword,
+  EmailAuthProvider,
+  GoogleAuthProvider,
+  onAuthStateChanged,
+  reauthenticateWithCredential,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  updatePassword,
+  updateProfile,
+  User,
+} from 'firebase/auth';
 import { auth, db } from '../lib/firebase';
 import {
   doc,
@@ -13,15 +27,20 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import {
+  AuthProviderType,
   buildSuggestedUsername,
   claimUsernameAndSaveProfile,
+  detectAuthProvider,
   getOrCreateLocalSessionId,
+  isValidEmail,
   LoginSessionRecord,
+  mapFirebaseAuthError,
   normalizeUsernameKey,
   revokeLoginSession,
   rotateLocalSessionId,
   upsertLoginSession,
   USERNAME_KEY_REGEX,
+  USERNAME_REGEX,
 } from '../lib/authService';
 
 export const translations = {
@@ -110,9 +129,18 @@ interface CompleteOnboardingInput {
   photoURL: string;
 }
 
+interface EmailSignUpInput {
+  email: string;
+  password: string;
+  fullName: string;
+  username?: string;
+}
+
 interface AuthContextType {
   user: User | null;
   profile: any | null;
+  authProvider: AuthProviderType | null;
+  emailVerified: boolean;
   isFirebaseAuthenticated: boolean;
   needsOnboarding: boolean;
   dbSyncStatus: 'idle' | 'syncing' | 'connected' | 'error';
@@ -131,6 +159,15 @@ interface AuthContextType {
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
   t: (key: string) => string;
   signIn: () => Promise<void>;
+  signInWithEmail: (email: string, password: string) => Promise<boolean>;
+  signUpWithEmail: (input: EmailSignUpInput) => Promise<boolean>;
+  sendPasswordReset: (email: string) => Promise<boolean>;
+  resendVerificationEmail: () => Promise<boolean>;
+  refreshEmailVerification: () => Promise<boolean>;
+  changeUserPassword: (
+    currentPassword: string,
+    newPassword: string
+  ) => Promise<{ ok: boolean; error?: string }>;
   completeOnboarding: (data: CompleteOnboardingInput) => Promise<void>;
   revokeSession: (sessionId: string) => Promise<void>;
   logOut: () => Promise<void>;
@@ -141,6 +178,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
+  const [authProvider, setAuthProvider] = useState<AuthProviderType | null>(null);
+  const [emailVerified, setEmailVerified] = useState(false);
   const [isFirebaseAuthenticated, setIsFirebaseAuthenticated] = useState(false);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [dbSyncStatus, setDbSyncStatus] = useState<'idle' | 'syncing' | 'connected' | 'error'>('idle');
@@ -234,6 +273,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             signOut(auth).catch(() => {});
             setIsFirebaseAuthenticated(false);
             setNeedsOnboarding(false);
+            setAuthProvider(null);
+            setEmailVerified(false);
             setDbSyncStatus('idle');
             setCurrentSessionId(null);
             activeSessionIdRef.current = null;
@@ -247,7 +288,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             return;
           }
 
+          const detectedProvider = detectAuthProvider(firebaseUser);
           setUser(firebaseUser);
+          setAuthProvider(detectedProvider);
+          setEmailVerified(Boolean(firebaseUser.emailVerified));
           setIsFirebaseAuthenticated(true);
           setDbSyncStatus('syncing');
           setAuthError(null);
@@ -261,9 +305,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             username: buildSuggestedUsername(firebaseUser.email, firebaseUser.uid),
             fullName: firebaseUser.displayName || '',
             email: firebaseUser.email || '',
+            emailVerified: Boolean(firebaseUser.emailVerified),
             photoURL: firebaseUser.photoURL || '',
             bio: '',
-            authProvider: 'google',
+            authProvider: detectedProvider,
             onboardingCompleted: false,
           };
           setProfile((prev: any) => (prev?.uid === firebaseUser.uid ? prev : suggestedProfile));
@@ -286,12 +331,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   loginRecorded = true;
                   const normalizedKey = normalizeUsernameKey(data.username);
 
-                  // Ensure legacy or returning users keep lastLoginAt & username lock synced
                   const syncReturningUser = async () => {
                     try {
                       await updateDoc(userRef, {
                         lastLoginAt: serverTimestamp(),
-                        authProvider: 'google',
+                        authProvider: detectedProvider,
+                        emailVerified: Boolean(firebaseUser.emailVerified),
                         onboardingCompleted: true,
                         ...(USERNAME_KEY_REGEX.test(normalizedKey) && !data.usernameLower
                           ? { usernameLower: normalizedKey }
@@ -317,7 +362,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                       }
                     }
 
-                    const status = await upsertLoginSession(firebaseUser.uid, sessionId);
+                    const status = await upsertLoginSession(firebaseUser.uid, sessionId, detectedProvider);
                     if (status === 'revoked') {
                       rotateLocalSessionId();
                       await signOut(auth).catch(() => {});
@@ -394,6 +439,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         } else {
           setIsFirebaseAuthenticated(false);
           setNeedsOnboarding(false);
+          setAuthProvider(null);
+          setEmailVerified(false);
           setDbSyncStatus('idle');
           setCurrentSessionId(null);
           activeSessionIdRef.current = null;
@@ -428,33 +475,211 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       provider.setCustomParameters({ prompt: 'select_account' });
       await signInWithPopup(auth, provider);
     } catch (error: any) {
-      const code = error?.code || '';
-      if (code === 'auth/popup-blocked') {
-        setAuthError(
-          language === 'ar'
-            ? 'المتصفح منع نافذة تسجيل الدخول المنبثقة. يرجى السماح بالنوافذ المنبثقة أو فتح التطبيق في نافذة جديدة.'
-            : 'Sign-in popup was blocked by your browser. Please allow popups or open the app in a new tab.'
-        );
-      } else if (code === 'auth/unauthorized-domain') {
-        setAuthError(
-          language === 'ar'
-            ? 'هذا النطاق غير مصرح به في Firebase Auth بعد. أضف النطاق من إعدادات Firebase Console.'
-            : 'This domain is not yet authorized in Firebase Authentication settings.'
-        );
-      } else if (code !== 'auth/popup-closed-by-user' && code !== 'auth/cancelled-popup-request') {
-        setAuthError(
-          language === 'ar'
-            ? 'تعذر تسجيل الدخول عبر Google حالياً. يرجى المحاولة مجدداً.'
-            : 'Unable to sign in with Google right now. Please try again.'
-        );
-      }
+      const message = mapFirebaseAuthError(error, language);
+      if (message) setAuthError(message);
     } finally {
       setSigningIn(false);
     }
   };
 
+  const signInWithEmail = async (email: string, password: string): Promise<boolean> => {
+    setAuthError(null);
+    const cleanEmail = email.trim();
+    if (!isValidEmail(cleanEmail)) {
+      setAuthError(
+        language === 'ar' ? 'يرجى إدخال بريد إلكتروني صحيح.' : 'Please enter a valid email address.'
+      );
+      return false;
+    }
+    if (!password) {
+      setAuthError(
+        language === 'ar' ? 'يرجى إدخال كلمة المرور.' : 'Please enter your password.'
+      );
+      return false;
+    }
+
+    setSigningIn(true);
+    try {
+      rotateLocalSessionId();
+      await signInWithEmailAndPassword(auth, cleanEmail, password);
+      return true;
+    } catch (error: any) {
+      const message = mapFirebaseAuthError(error, language);
+      if (message) setAuthError(message);
+      return false;
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const signUpWithEmail = async (input: EmailSignUpInput): Promise<boolean> => {
+    setAuthError(null);
+    const cleanEmail = input.email.trim();
+    const cleanFullName = input.fullName.trim().slice(0, 80);
+    const cleanUsername = input.username?.trim().slice(0, 30) || '';
+
+    if (!isValidEmail(cleanEmail)) {
+      setAuthError(
+        language === 'ar' ? 'يرجى إدخال بريد إلكتروني صحيح.' : 'Please enter a valid email address.'
+      );
+      return false;
+    }
+    if (input.password.length < 8) {
+      setAuthError(
+        language === 'ar'
+          ? 'كلمة المرور يجب أن تتكون من 8 أحرف على الأقل.'
+          : 'Password must be at least 8 characters long.'
+      );
+      return false;
+    }
+    if (cleanUsername && !USERNAME_REGEX.test(cleanUsername)) {
+      setAuthError(
+        language === 'ar'
+          ? 'اسم المستخدم يجب أن يكون 3 إلى 30 حرفاً (أحرف إنجليزية، أرقام، أو _).'
+          : 'Username must be 3–30 characters using letters, numbers, or underscores.'
+      );
+      return false;
+    }
+
+    setSigningIn(true);
+    try {
+      const sessionId = rotateLocalSessionId();
+      const credential = await createUserWithEmailAndPassword(auth, cleanEmail, input.password);
+
+      if (cleanFullName) {
+        await updateProfile(credential.user, { displayName: cleanFullName }).catch(() => {});
+      }
+
+      // Send verification email in background without blocking profile creation
+      sendEmailVerification(credential.user).catch(() => {});
+
+      if (cleanUsername && USERNAME_REGEX.test(cleanUsername)) {
+        try {
+          await claimUsernameAndSaveProfile({
+            uid: credential.user.uid,
+            email: cleanEmail,
+            username: cleanUsername,
+            fullName: cleanFullName,
+            bio: '',
+            photoURL: '',
+            authProvider: 'password',
+            emailVerified: credential.user.emailVerified,
+          });
+          activeSessionIdRef.current = sessionId;
+          setCurrentSessionId(sessionId);
+          await upsertLoginSession(credential.user.uid, sessionId, 'password');
+          setNeedsOnboarding(false);
+        } catch (profileErr: any) {
+          // If chosen username was already taken, user stays authenticated and enters OnboardingView to pick another
+          if (profileErr?.message === 'USERNAME_TAKEN') {
+            setNeedsOnboarding(true);
+          } else {
+            throw profileErr;
+          }
+        }
+      }
+
+      return true;
+    } catch (error: any) {
+      const message = mapFirebaseAuthError(error, language);
+      if (message) setAuthError(message);
+      return false;
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const sendPasswordReset = async (email: string): Promise<boolean> => {
+    setAuthError(null);
+    const cleanEmail = email.trim();
+    if (!isValidEmail(cleanEmail)) {
+      setAuthError(
+        language === 'ar' ? 'يرجى إدخال بريد إلكتروني صحيح.' : 'Please enter a valid email address.'
+      );
+      return false;
+    }
+
+    setSigningIn(true);
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      return true;
+    } catch (error: any) {
+      const message = mapFirebaseAuthError(error, language);
+      if (message) setAuthError(message);
+      return false;
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const resendVerificationEmail = async (): Promise<boolean> => {
+    if (!auth.currentUser) return false;
+    try {
+      await sendEmailVerification(auth.currentUser);
+      return true;
+    } catch (error: any) {
+      const message = mapFirebaseAuthError(error, language);
+      if (message) setAuthError(message);
+      return false;
+    }
+  };
+
+  const refreshEmailVerification = async (): Promise<boolean> => {
+    if (!auth.currentUser) return false;
+    await auth.currentUser.reload();
+    const verified = Boolean(auth.currentUser.emailVerified);
+    setEmailVerified(verified);
+    if (verified) {
+      try {
+        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          emailVerified: true,
+        });
+      } catch {
+        // Non-blocking sync
+      }
+    }
+    return verified;
+  };
+
+  const changeUserPassword = async (
+    currentPassword: string,
+    newPassword: string
+  ): Promise<{ ok: boolean; error?: string }> => {
+    const currentUser = auth.currentUser;
+    if (!currentUser || !currentUser.email) {
+      return {
+        ok: false,
+        error: language === 'ar' ? 'لم يتم العثور على الحساب الحالي.' : 'No active email account found.',
+      };
+    }
+    if (newPassword.length < 8) {
+      return {
+        ok: false,
+        error:
+          language === 'ar'
+            ? 'كلمة المرور الجديدة يجب أن تتكون من 8 أحرف على الأقل.'
+            : 'New password must be at least 8 characters long.',
+      };
+    }
+
+    try {
+      const credential = EmailAuthProvider.credential(currentUser.email, currentPassword);
+      await reauthenticateWithCredential(currentUser, credential);
+      await updatePassword(currentUser, newPassword);
+      return { ok: true };
+    } catch (error: any) {
+      return {
+        ok: false,
+        error:
+          mapFirebaseAuthError(error, language) ||
+          (language === 'ar' ? 'تعذر تحديث كلمة المرور.' : 'Failed to update password.'),
+      };
+    }
+  };
+
   const completeOnboarding = async (data: CompleteOnboardingInput) => {
     if (!user) throw new Error('Not authenticated');
+    const provider = detectAuthProvider(user);
     await claimUsernameAndSaveProfile({
       uid: user.uid,
       email: user.email || '',
@@ -463,12 +688,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       bio: data.bio,
       photoURL: data.photoURL,
       previousUsername: profile?.username,
+      authProvider: provider,
+      emailVerified: user.emailVerified,
     });
 
     const sessionId = activeSessionIdRef.current || getOrCreateLocalSessionId();
     activeSessionIdRef.current = sessionId;
     setCurrentSessionId(sessionId);
-    await upsertLoginSession(user.uid, sessionId);
+    await upsertLoginSession(user.uid, sessionId, provider);
     setNeedsOnboarding(false);
   };
 
@@ -498,6 +725,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
     setIsFirebaseAuthenticated(false);
     setNeedsOnboarding(false);
+    setAuthProvider(null);
+    setEmailVerified(false);
     setDbSyncStatus('idle');
     setCurrentSessionId(null);
     activeSessionIdRef.current = null;
@@ -511,6 +740,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         profile,
+        authProvider,
+        emailVerified,
         isFirebaseAuthenticated,
         needsOnboarding,
         dbSyncStatus,
@@ -529,6 +760,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setTheme,
         t,
         signIn,
+        signInWithEmail,
+        signUpWithEmail,
+        sendPasswordReset,
+        resendVerificationEmail,
+        refreshEmailVerification,
+        changeUserPassword,
         completeOnboarding,
         revokeSession,
         logOut,

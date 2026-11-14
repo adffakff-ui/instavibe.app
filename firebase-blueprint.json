@@ -12,7 +12,8 @@
         "bio": { "type": "string", "description": "Short user biography", "maxLength": 220 },
         "photoURL": { "type": "string", "description": "URL to profile photo", "maxLength": 900000 },
         "email": { "type": "string", "description": "User email address", "maxLength": 320 },
-        "authProvider": { "type": "string", "enum": ["google"], "description": "Authentication provider" },
+        "emailVerified": { "type": "boolean", "description": "Whether the account email has been verified" },
+        "authProvider": { "type": "string", "enum": ["google", "password"], "description": "Authentication provider" },
         "onboardingCompleted": { "type": "boolean", "description": "Whether initial profile setup is finished" },
         "lastLoginAt": { "type": "string", "format": "date-time", "description": "Timestamp of latest login" },
         "interests": { "type": "object", "description": "Map of tag names to interest scores" },
@@ -38,7 +39,7 @@
       "properties": {
         "sessionId": { "type": "string", "description": "Unique client session identifier" },
         "userId": { "type": "string", "description": "Owner user ID" },
-        "provider": { "type": "string", "enum": ["google"] },
+        "provider": { "type": "string", "enum": ["google", "password"] },
         "deviceLabel": { "type": "string", "minLength": 1, "maxLength": 100 },
         "platform": { "type": "string", "maxLength": 60 },
         "status": { "type": "string", "enum": ["active", "revoked"] },

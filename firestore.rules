@@ -34,7 +34,7 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'username', 'email'])
-        && data.keys().hasOnly(['uid', 'username', 'usernameLower', 'fullName', 'bio', 'photoURL', 'email', 'authProvider', 'onboardingCompleted', 'lastLoginAt', 'interests', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'username', 'usernameLower', 'fullName', 'bio', 'photoURL', 'email', 'emailVerified', 'authProvider', 'onboardingCompleted', 'lastLoginAt', 'interests', 'createdAt'])
         && data.uid == request.auth.uid
         && data.username is string && data.username.size() >= 3 && data.username.size() <= 30
         && data.email is string && data.email.size() <= 320
@@ -42,7 +42,8 @@ service cloud.firestore {
         && (!('fullName' in data) || data.fullName == null || (data.fullName is string && data.fullName.size() <= 80))
         && (!('bio' in data) || data.bio == null || (data.bio is string && data.bio.size() <= 220))
         && (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 900000))
-        && (!('authProvider' in data) || data.authProvider in ['google'])
+        && (!('emailVerified' in data) || data.emailVerified is bool)
+        && (!('authProvider' in data) || data.authProvider in ['google', 'password'])
         && (!('onboardingCompleted' in data) || data.onboardingCompleted is bool);
     }
 
@@ -59,7 +60,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['sessionId', 'userId', 'provider', 'deviceLabel', 'platform', 'status', 'createdAt', 'lastActiveAt'])
         && isValidId(data.sessionId)
         && data.userId == request.auth.uid
-        && data.provider in ['google']
+        && data.provider in ['google', 'password']
         && data.deviceLabel is string && data.deviceLabel.size() >= 1 && data.deviceLabel.size() <= 100
         && (!('platform' in data) || data.platform == null || (data.platform is string && data.platform.size() <= 60))
         && data.status in ['active', 'revoked'];

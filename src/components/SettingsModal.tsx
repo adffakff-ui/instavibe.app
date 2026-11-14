@@ -20,12 +20,15 @@ import {
   Trash2,
   Mic,
   ShieldCheck,
+  KeyRound,
+  RefreshCw,
 } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { evaluatePasswordStrength } from '../lib/authService';
 import {
   BrowserPermissionState,
   getStoredMediaPermissions,
@@ -64,6 +67,11 @@ export default function SettingsModal({
   const {
     user,
     profile,
+    authProvider,
+    emailVerified,
+    resendVerificationEmail,
+    refreshEmailVerification,
+    changeUserPassword,
     isFirebaseAuthenticated,
     dbSyncStatus,
     loginSessions,
@@ -91,6 +99,14 @@ export default function SettingsModal({
   const [confirmReset, setConfirmReset] = useState(false);
   const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
 
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [currentPwd, setCurrentPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmNewPwd, setConfirmNewPwd] = useState('');
+  const [updatingPwd, setUpdatingPwd] = useState(false);
+  const [checkingVerification, setCheckingVerification] = useState(false);
+  const [sendingVerification, setSendingVerification] = useState(false);
+
   const [showAccessModal, setShowAccessModal] = useState(false);
   const [cameraAccess, setCameraAccess] = useState(false);
   const [micAccess, setMicAccess] = useState(false);
@@ -113,6 +129,10 @@ export default function SettingsModal({
       setConfirmReset(false);
       setShowAccessModal(false);
       setAccessModalError(null);
+      setShowPasswordForm(false);
+      setCurrentPwd('');
+      setNewPwd('');
+      setConfirmNewPwd('');
     }
   }, [isOpen, initialTab]);
 
@@ -282,8 +302,8 @@ export default function SettingsModal({
         type: 'error',
         text:
           language === 'ar'
-            ? 'يرجى تسجيل الدخول بحساب Google لحفظ تعديلات الملف الشخصي.'
-            : 'Please sign in with Google to save profile changes.',
+            ? 'يرجى تسجيل الدخول لحفظ تعديلات الملف الشخصي.'
+            : 'Please sign in to save profile changes.',
       });
       return;
     }
@@ -353,6 +373,60 @@ export default function SettingsModal({
   const handleConfirmLogout = async () => {
     await logOut();
     onClose();
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFeedback(null);
+
+    const strength = evaluatePasswordStrength(newPwd);
+    if (!strength.isValid) {
+      setFeedback({
+        type: 'error',
+        text:
+          language === 'ar'
+            ? 'كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل وتحتوي على أحرف وأرقام.'
+            : 'New password must be at least 8 characters and include letters and numbers.',
+      });
+      return;
+    }
+    if (newPwd !== confirmNewPwd) {
+      setFeedback({
+        type: 'error',
+        text:
+          language === 'ar'
+            ? 'كلمة المرور الجديدة وتأكيدها غير متطابقتين.'
+            : 'New password and confirmation do not match.',
+      });
+      return;
+    }
+
+    setUpdatingPwd(true);
+    try {
+      const res = await changeUserPassword(currentPwd, newPwd);
+      if (res.ok) {
+        setShowPasswordForm(false);
+        setCurrentPwd('');
+        setNewPwd('');
+        setConfirmNewPwd('');
+        setFeedback({
+          type: 'success',
+          text:
+            language === 'ar'
+              ? 'تم تحديث كلمة المرور بنجاح.'
+              : 'Password updated successfully.',
+        });
+      } else {
+        setFeedback({
+          type: 'error',
+          text:
+            res.error ||
+            (language === 'ar' ? 'تعذر تحديث كلمة المرور.' : 'Failed to update password.'),
+        });
+      }
+    } finally {
+      setUpdatingPwd(false);
+    }
   };
 
   const handleOpenAccessRequest = async () => {
@@ -887,8 +961,95 @@ export default function SettingsModal({
                       {language === 'ar' ? 'مزود المصادقة' : 'Auth Provider'}
                     </span>
                     <span className="font-semibold text-slate-900 dark:text-white">
-                      Google
+                      {authProvider === 'password'
+                        ? language === 'ar'
+                          ? 'البريد الإلكتروني وكلمة المرور'
+                          : 'Email & Password'
+                        : 'Google'}
                     </span>
+                  </div>
+                  <div className="p-3.5 flex items-center justify-between gap-3">
+                    <span className="text-slate-500 dark:text-slate-400">
+                      {language === 'ar' ? 'توثيق البريد الإلكتروني' : 'Email Verification'}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`font-bold ${
+                          emailVerified
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-amber-600 dark:text-amber-400'
+                        }`}
+                      >
+                        {emailVerified
+                          ? language === 'ar'
+                            ? 'موثّق'
+                            : 'Verified'
+                          : language === 'ar'
+                          ? 'بانتظار التأكيد'
+                          : 'Pending'}
+                      </span>
+                      {!emailVerified && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={sendingVerification}
+                            onClick={async () => {
+                              setSendingVerification(true);
+                              try {
+                                const ok = await resendVerificationEmail();
+                                setFeedback({
+                                  type: ok ? 'success' : 'error',
+                                  text: ok
+                                    ? language === 'ar'
+                                      ? 'تم إرسال رابط التحقق إلى بريدك الإلكتروني.'
+                                      : 'Verification link sent to your email.'
+                                    : language === 'ar'
+                                    ? 'تعذر إرسال رابط التحقق حالياً.'
+                                    : 'Unable to send verification link right now.',
+                                });
+                              } finally {
+                                setSendingVerification(false);
+                              }
+                            }}
+                            className="px-2 py-1 rounded-lg bg-slate-200/80 dark:bg-slate-700 text-[11px] font-bold text-slate-800 dark:text-slate-100 hover:opacity-85 disabled:opacity-50"
+                          >
+                            {sendingVerification ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : language === 'ar' ? (
+                              'إرسال'
+                            ) : (
+                              'Resend'
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={checkingVerification}
+                            onClick={async () => {
+                              setCheckingVerification(true);
+                              try {
+                                const ok = await refreshEmailVerification();
+                                setFeedback({
+                                  type: ok ? 'success' : 'error',
+                                  text: ok
+                                    ? language === 'ar'
+                                      ? 'تم تأكيد البريد الإلكتروني بنجاح.'
+                                      : 'Email verified successfully.'
+                                    : language === 'ar'
+                                    ? 'لم يتم تفعيل البريد بعد. افتح الرابط المرسل ثم أعد الفحص.'
+                                    : 'Email not verified yet. Open the sent link then refresh.',
+                                });
+                              } finally {
+                                setCheckingVerification(false);
+                              }
+                            }}
+                            aria-label={language === 'ar' ? 'تحديث حالة التحقق' : 'Refresh verification status'}
+                            className="p-1 rounded-lg bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:opacity-85 disabled:opacity-50"
+                          >
+                            <RefreshCw size={12} className={checkingVerification ? 'animate-spin' : ''} />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                   <div className="p-3.5 flex items-center justify-between gap-3">
                     <span className="text-slate-500 dark:text-slate-400">
@@ -918,6 +1079,90 @@ export default function SettingsModal({
                   </div>
                 </div>
               </div>
+
+              {authProvider === 'password' && (
+                <>
+                  <div className="border-t border-slate-100 dark:border-slate-800" />
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                        <KeyRound size={16} className="text-purple-500" />
+                        <span>{language === 'ar' ? 'كلمة المرور والأمان' : 'Password & Security'}</span>
+                      </h3>
+                      <button
+                        type="button"
+                        onClick={() => setShowPasswordForm((prev) => !prev)}
+                        className="text-xs font-bold text-purple-600 dark:text-purple-400 hover:underline"
+                      >
+                        {showPasswordForm
+                          ? language === 'ar'
+                            ? 'إلغاء'
+                            : 'Cancel'
+                          : language === 'ar'
+                          ? 'تغيير كلمة المرور'
+                          : 'Change Password'}
+                      </button>
+                    </div>
+
+                    {showPasswordForm ? (
+                      <form onSubmit={handleChangePassword} className="space-y-2.5 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-800">
+                        <input
+                          type="password"
+                          dir="ltr"
+                          required
+                          autoComplete="current-password"
+                          value={currentPwd}
+                          onChange={(e) => setCurrentPwd(e.target.value)}
+                          placeholder={language === 'ar' ? 'كلمة المرور الحالية' : 'Current password'}
+                          className="w-full bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl px-3.5 py-2 text-xs border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-purple-600"
+                        />
+                        <input
+                          type="password"
+                          dir="ltr"
+                          required
+                          minLength={8}
+                          autoComplete="new-password"
+                          value={newPwd}
+                          onChange={(e) => setNewPwd(e.target.value)}
+                          placeholder={
+                            language === 'ar'
+                              ? 'كلمة المرور الجديدة (8+ أحرف وأرقام)'
+                              : 'New password (8+ chars, letters & numbers)'
+                          }
+                          className="w-full bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl px-3.5 py-2 text-xs border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-purple-600"
+                        />
+                        <input
+                          type="password"
+                          dir="ltr"
+                          required
+                          minLength={8}
+                          autoComplete="new-password"
+                          value={confirmNewPwd}
+                          onChange={(e) => setConfirmNewPwd(e.target.value)}
+                          placeholder={
+                            language === 'ar' ? 'تأكيد كلمة المرور الجديدة' : 'Confirm new password'
+                          }
+                          className="w-full bg-white dark:bg-slate-900 text-slate-900 dark:text-white rounded-xl px-3.5 py-2 text-xs border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-purple-600"
+                        />
+                        <button
+                          type="submit"
+                          disabled={updatingPwd}
+                          className="w-full min-h-[40px] py-2 px-4 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                          {updatingPwd && <Loader2 size={14} className="animate-spin" />}
+                          <span>{language === 'ar' ? 'حفظ كلمة المرور الجديدة' : 'Update Password'}</span>
+                        </button>
+                      </form>
+                    ) : (
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {language === 'ar'
+                          ? 'يمكنك تحديث كلمة مرور حسابك بشكل دوري لتعزيز الحماية.'
+                          : 'Update your account password anytime to keep your account secure.'}
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
 
               <div className="border-t border-slate-100 dark:border-slate-800" />
 
@@ -961,17 +1206,27 @@ export default function SettingsModal({
                                   </span>
                                 )}
                               </div>
-                              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                                {lastSeenDate
-                                  ? lastSeenDate.toLocaleString(language === 'ar' ? 'ar-EG' : 'en-US', {
-                                      month: 'short',
-                                      day: 'numeric',
-                                      hour: '2-digit',
-                                      minute: '2-digit',
-                                    })
-                                  : language === 'ar'
-                                  ? 'نشط الآن'
-                                  : 'Active now'}
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-1.5">
+                                <span>
+                                  {session.provider === 'password'
+                                    ? language === 'ar'
+                                      ? 'البريد الإلكتروني'
+                                      : 'Email'
+                                    : 'Google'}
+                                </span>
+                                <span>•</span>
+                                <span>
+                                  {lastSeenDate
+                                    ? lastSeenDate.toLocaleString(language === 'ar' ? 'ar-EG' : 'en-US', {
+                                        month: 'short',
+                                        day: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                      })
+                                    : language === 'ar'
+                                    ? 'نشط الآن'
+                                    : 'Active now'}
+                                </span>
                               </p>
                             </div>
                             {!isCurrent && (

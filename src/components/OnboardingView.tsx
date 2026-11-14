@@ -18,8 +18,19 @@ import {
 import UserAvatar from './UserAvatar';
 
 export default function OnboardingView() {
-  const { user, profile, language, setLanguage, completeOnboarding, logOut } = useAuth();
+  const {
+    user,
+    profile,
+    authProvider,
+    emailVerified,
+    resendVerificationEmail,
+    language,
+    setLanguage,
+    completeOnboarding,
+    logOut,
+  } = useAuth();
   const isAr = language === 'ar';
+  const [verificationResent, setVerificationResent] = useState(false);
 
   const [username, setUsername] = useState(() =>
     profile?.username && USERNAME_REGEX.test(profile.username)
@@ -197,10 +208,36 @@ export default function OnboardingView() {
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400">
             {isAr
-              ? `تم التحقق من ${user?.email || 'حسابك'}. اختر اسم مستخدم فريد لإتمام التسجيل.`
-              : `Verified ${user?.email || 'your account'}. Choose a unique username to finish registration.`}
+              ? `مسجّل عبر ${user?.email || 'حسابك'}. اختر اسم مستخدم فريد لإتمام التسجيل.`
+              : `Signed in as ${user?.email || 'your account'}. Choose a unique username to finish registration.`}
           </p>
         </div>
+
+        {authProvider === 'password' && !emailVerified && (
+          <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 text-amber-800 dark:text-amber-200 text-xs flex items-center justify-between gap-2">
+            <span>
+              {verificationResent
+                ? isAr
+                  ? 'تم إرسال رابط التفعيل إلى بريدك الإلكتروني.'
+                  : 'Verification email resent.'
+                : isAr
+                ? 'تم إرسال رابط تأكيد البريد الإلكتروني لحسابك.'
+                : 'A verification link was sent to your email.'}
+            </span>
+            {!verificationResent && (
+              <button
+                type="button"
+                onClick={async () => {
+                  const ok = await resendVerificationEmail();
+                  if (ok) setVerificationResent(true);
+                }}
+                className="font-bold underline shrink-0"
+              >
+                {isAr ? 'إعادة الإرسال' : 'Resend'}
+              </button>
+            )}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Avatar */}
@@ -342,7 +379,7 @@ export default function OnboardingView() {
             className="text-xs font-semibold text-slate-500 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400 flex items-center gap-1.5 py-1.5"
           >
             <LogOut size={14} />
-            <span>{isAr ? 'استخدام حساب Google آخر' : 'Use a different Google account'}</span>
+            <span>{isAr ? 'استخدام حساب آخر' : 'Use a different account'}</span>
           </button>
         </div>
       </div>

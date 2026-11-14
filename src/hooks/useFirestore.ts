@@ -19,7 +19,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { claimUsernameAndSaveProfile } from '../lib/authService';
+import { claimUsernameAndSaveProfile, detectAuthProvider } from '../lib/authService';
 import { ReactionType, normalizeReaction } from '../utils/reactions';
 
 export enum OperationType {
@@ -808,6 +808,9 @@ export function useFirestore() {
       const email = existingData.email || auth.currentUser?.email || '';
       const previousUsername = existingData.username || '';
 
+      const authProvider = detectAuthProvider(auth.currentUser) || existingData.authProvider || 'google';
+      const emailVerified = Boolean(auth.currentUser?.emailVerified ?? existingData.emailVerified);
+
       await claimUsernameAndSaveProfile({
         uid: userId,
         email,
@@ -816,6 +819,8 @@ export function useFirestore() {
         bio: updates.bio,
         photoURL: updates.photoURL,
         previousUsername,
+        authProvider,
+        emailVerified,
       });
     } catch (error: any) {
       if (error?.message === 'USERNAME_TAKEN' || error?.message === 'INVALID_USERNAME') {
