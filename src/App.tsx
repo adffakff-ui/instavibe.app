@@ -19,7 +19,7 @@ import { useBlockedConversationListener } from './hooks/useBlockedConversationLi
 import { SpeedInsights } from '@vercel/speed-insights/react';
 
 function AppContent() {
-  const { user, needsOnboarding, loading, blockedUsers } = useAuth();
+  const { user, needsOnboarding, pendingEmailVerification, loading, blockedUsers } = useAuth();
   const { isInstalled, isInstallable, install } = usePWAInstall();
   const [view, setView] = useState<'feed' | 'messages' | 'explore' | 'profile' | 'notifications' | 'discover' | 'analytics' | 'reels' | 'live'>('feed');
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
@@ -64,7 +64,7 @@ function AppContent() {
     setShowInstallModal(true);
   };
 
-  if (!user) {
+  if (!user || pendingEmailVerification) {
     return (
       <AuthPortal
         isInstalled={isInstalled}

@@ -1,13 +1,16 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
+  ConfirmationResult,
   createUserWithEmailAndPassword,
   EmailAuthProvider,
   GoogleAuthProvider,
   onAuthStateChanged,
   reauthenticateWithCredential,
+  RecaptchaVerifier,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
+  signInWithPhoneNumber,
   signInWithPopup,
   signOut,
   updatePassword,
@@ -32,9 +35,11 @@ import {
   claimUsernameAndSaveProfile,
   detectAuthProvider,
   getOrCreateLocalSessionId,
+  isValidE164Phone,
   isValidEmail,
   LoginSessionRecord,
   mapFirebaseAuthError,
+  normalizeDigits,
   normalizeUsernameKey,
   revokeLoginSession,
   rotateLocalSessionId,
@@ -136,11 +141,19 @@ interface EmailSignUpInput {
   username?: string;
 }
 
+export interface PendingEmailVerification {
+  email: string;
+  sent: boolean;
+  sending?: boolean;
+  error?: string | null;
+}
+
 interface AuthContextType {
   user: User | null;
   profile: any | null;
   authProvider: AuthProviderType | null;
   emailVerified: boolean;
+  pendingEmailVerification: PendingEmailVerification | null;
   isFirebaseAuthenticated: boolean;
   needsOnboarding: boolean;
   dbSyncStatus: 'idle' | 'syncing' | 'connected' | 'error';
@@ -161,9 +174,13 @@ interface AuthContextType {
   signIn: () => Promise<void>;
   signInWithEmail: (email: string, password: string) => Promise<boolean>;
   signUpWithEmail: (input: EmailSignUpInput) => Promise<boolean>;
+  sendPhoneVerificationCode: (e164Phone: string, recaptchaContainerId: string) => Promise<boolean>;
+  confirmPhoneVerificationCode: (verificationCode: string) => Promise<boolean>;
+  resetPhoneVerification: () => void;
   sendPasswordReset: (email: string) => Promise<boolean>;
   resendVerificationEmail: () => Promise<boolean>;
   refreshEmailVerification: () => Promise<boolean>;
+  dismissPendingEmailVerification: () => void;
   changeUserPassword: (
     currentPassword: string,
     newPassword: string
@@ -180,6 +197,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<any | null>(null);
   const [authProvider, setAuthProvider] = useState<AuthProviderType | null>(null);
   const [emailVerified, setEmailVerified] = useState(false);
+  const [pendingEmailVerification, setPendingEmailVerification] =
+    useState<PendingEmailVerification | null>(null);
   const [isFirebaseAuthenticated, setIsFirebaseAuthenticated] = useState(false);
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [dbSyncStatus, setDbSyncStatus] = useState<'idle' | 'syncing' | 'connected' | 'error'>('idle');
@@ -201,8 +220,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
 
   const activeSessionIdRef = useRef<string | null>(null);
+  const recaptchaVerifierRef = useRef<RecaptchaVerifier | null>(null);
+  const recaptchaContainerIdRef = useRef<string | null>(null);
+  const confirmationResultRef = useRef<ConfirmationResult | null>(null);
   const languageRef = useRef(language);
   languageRef.current = language;
+
+  const clearPhoneRecaptcha = () => {
+    if (recaptchaVerifierRef.current) {
+      try {
+        recaptchaVerifierRef.current.clear();
+      } catch {
+        // Ignore cleanup errors
+      }
+      recaptchaVerifierRef.current = null;
+    }
+    if (recaptchaContainerIdRef.current && typeof document !== 'undefined') {
+      const container = document.getElementById(recaptchaContainerIdRef.current);
+      if (container) {
+        container.innerHTML = '';
+      }
+    }
+  };
 
   useEffect(() => {
     document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr';
@@ -302,9 +341,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           const suggestedProfile = {
             uid: firebaseUser.uid,
-            username: buildSuggestedUsername(firebaseUser.email, firebaseUser.uid),
+            username: buildSuggestedUsername(
+              firebaseUser.email,
+              firebaseUser.uid,
+              firebaseUser.phoneNumber
+            ),
             fullName: firebaseUser.displayName || '',
             email: firebaseUser.email || '',
+            phoneNumber: firebaseUser.phoneNumber || '',
             emailVerified: Boolean(firebaseUser.emailVerified),
             photoURL: firebaseUser.photoURL || '',
             bio: '',
@@ -337,6 +381,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         lastLoginAt: serverTimestamp(),
                         authProvider: detectedProvider,
                         emailVerified: Boolean(firebaseUser.emailVerified),
+                        ...(firebaseUser.phoneNumber
+                          ? { phoneNumber: firebaseUser.phoneNumber.slice(0, 32) }
+                          : {}),
                         onboardingCompleted: true,
                         ...(USERNAME_KEY_REGEX.test(normalizedKey) && !data.usernameLower
                           ? { usernameLower: normalizedKey }
@@ -441,6 +488,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setNeedsOnboarding(false);
           setAuthProvider(null);
           setEmailVerified(false);
+          setPendingEmailVerification(null);
           setDbSyncStatus('idle');
           setCurrentSessionId(null);
           activeSessionIdRef.current = null;
@@ -463,6 +511,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       unsubscribeAuth();
       cleanupListeners();
+      clearPhoneRecaptcha();
     };
   }, []);
 
@@ -546,18 +595,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const sessionId = rotateLocalSessionId();
       const credential = await createUserWithEmailAndPassword(auth, cleanEmail, input.password);
 
+      setPendingEmailVerification({
+        email: cleanEmail,
+        sent: false,
+        sending: true,
+        error: null,
+      });
+
       if (cleanFullName) {
         await updateProfile(credential.user, { displayName: cleanFullName }).catch(() => {});
       }
 
-      // Send verification email in background without blocking profile creation
-      sendEmailVerification(credential.user).catch(() => {});
+      auth.languageCode = languageRef.current;
+      try {
+        await sendEmailVerification(credential.user);
+        setPendingEmailVerification({
+          email: cleanEmail,
+          sent: true,
+          sending: false,
+          error: null,
+        });
+      } catch (verificationError: any) {
+        const verMsg = mapFirebaseAuthError(verificationError, language);
+        setPendingEmailVerification({
+          email: cleanEmail,
+          sent: false,
+          sending: false,
+          error:
+            verMsg ||
+            (language === 'ar'
+              ? 'تم إنشاء الحساب، لكن تعذر إرسال رسالة التفعيل الآن. يرجى الضغط على إعادة الإرسال.'
+              : 'Account created, but we could not send the verification email yet. Please try resending.'),
+        });
+      }
 
       if (cleanUsername && USERNAME_REGEX.test(cleanUsername)) {
         try {
           await claimUsernameAndSaveProfile({
             uid: credential.user.uid,
             email: cleanEmail,
+            phoneNumber: '',
             username: cleanUsername,
             fullName: cleanFullName,
             bio: '',
@@ -569,16 +646,100 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setCurrentSessionId(sessionId);
           await upsertLoginSession(credential.user.uid, sessionId, 'password');
           setNeedsOnboarding(false);
-        } catch (profileErr: any) {
-          // If chosen username was already taken, user stays authenticated and enters OnboardingView to pick another
-          if (profileErr?.message === 'USERNAME_TAKEN') {
-            setNeedsOnboarding(true);
-          } else {
-            throw profileErr;
-          }
+        } catch {
+          setNeedsOnboarding(true);
         }
       }
 
+      return true;
+    } catch (error: any) {
+      setPendingEmailVerification(null);
+      const message = mapFirebaseAuthError(error, language);
+      if (message) setAuthError(message);
+      return false;
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const sendPhoneVerificationCode = async (
+    e164Phone: string,
+    recaptchaContainerId: string
+  ): Promise<boolean> => {
+    setAuthError(null);
+    const cleanPhone = e164Phone.trim();
+
+    if (!isValidE164Phone(cleanPhone)) {
+      setAuthError(
+        language === 'ar'
+          ? 'يرجى إدخال رقم هاتف صحيح بالصيغة الدولية (مثال: +966501234567).'
+          : 'Please enter a valid international phone number (e.g. +966501234567).'
+      );
+      return false;
+    }
+
+    if (typeof document === 'undefined' || !document.getElementById(recaptchaContainerId)) {
+      setAuthError(
+        language === 'ar'
+          ? 'تعذر تهيئة عنصر التحقق الأمني. يرجى إعادة المحاولة.'
+          : 'Unable to initialize security verification widget. Please try again.'
+      );
+      return false;
+    }
+
+    setSigningIn(true);
+    try {
+      clearPhoneRecaptcha();
+      confirmationResultRef.current = null;
+      auth.languageCode = languageRef.current;
+
+      const verifier = new RecaptchaVerifier(auth, recaptchaContainerId, {
+        size: 'invisible',
+      });
+      recaptchaVerifierRef.current = verifier;
+      recaptchaContainerIdRef.current = recaptchaContainerId;
+
+      const confirmationResult = await signInWithPhoneNumber(auth, cleanPhone, verifier);
+      confirmationResultRef.current = confirmationResult;
+      return true;
+    } catch (error: any) {
+      clearPhoneRecaptcha();
+      const message = mapFirebaseAuthError(error, language);
+      if (message) setAuthError(message);
+      return false;
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const confirmPhoneVerificationCode = async (verificationCode: string): Promise<boolean> => {
+    setAuthError(null);
+    const cleanCode = normalizeDigits(verificationCode).replace(/\D/g, '');
+
+    if (cleanCode.length !== 6) {
+      setAuthError(
+        language === 'ar'
+          ? 'يرجى إدخال رمز التحقق المكون من 6 أرقام.'
+          : 'Please enter the 6-digit verification code.'
+      );
+      return false;
+    }
+
+    if (!confirmationResultRef.current) {
+      setAuthError(
+        language === 'ar'
+          ? 'انتهت جلسة التحقق من الهاتف. يرجى طلب رمز جديد.'
+          : 'Phone verification session expired. Please request a new code.'
+      );
+      return false;
+    }
+
+    setSigningIn(true);
+    try {
+      rotateLocalSessionId();
+      await confirmationResultRef.current.confirm(cleanCode);
+      confirmationResultRef.current = null;
+      clearPhoneRecaptcha();
       return true;
     } catch (error: any) {
       const message = mapFirebaseAuthError(error, language);
@@ -587,6 +748,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setSigningIn(false);
     }
+  };
+
+  const resetPhoneVerification = () => {
+    confirmationResultRef.current = null;
+    clearPhoneRecaptcha();
+    setAuthError(null);
   };
 
   const sendPasswordReset = async (email: string): Promise<boolean> => {
@@ -614,12 +781,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const resendVerificationEmail = async (): Promise<boolean> => {
     if (!auth.currentUser) return false;
+    setAuthError(null);
     try {
+      auth.languageCode = languageRef.current;
       await sendEmailVerification(auth.currentUser);
+      setPendingEmailVerification((prev) =>
+        prev
+          ? { ...prev, sent: true, sending: false, error: null }
+          : prev
+      );
       return true;
     } catch (error: any) {
       const message = mapFirebaseAuthError(error, language);
       if (message) setAuthError(message);
+      setPendingEmailVerification((prev) =>
+        prev
+          ? { ...prev, sent: false, sending: false, error: message || prev.error }
+          : prev
+      );
       return false;
     }
   };
@@ -630,6 +809,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const verified = Boolean(auth.currentUser.emailVerified);
     setEmailVerified(verified);
     if (verified) {
+      setPendingEmailVerification(null);
       try {
         await updateDoc(doc(db, 'users', auth.currentUser.uid), {
           emailVerified: true,
@@ -639,6 +819,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
     return verified;
+  };
+
+  const dismissPendingEmailVerification = () => {
+    setPendingEmailVerification(null);
+    setAuthError(null);
   };
 
   const changeUserPassword = async (
@@ -683,6 +868,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await claimUsernameAndSaveProfile({
       uid: user.uid,
       email: user.email || '',
+      phoneNumber: user.phoneNumber || '',
       username: data.username,
       fullName: data.fullName,
       bio: data.bio,
@@ -717,6 +903,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Continue sign-out even if session update fails
       }
     }
+    clearPhoneRecaptcha();
+    confirmationResultRef.current = null;
     rotateLocalSessionId();
     try {
       await signOut(auth);
@@ -727,6 +915,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setNeedsOnboarding(false);
     setAuthProvider(null);
     setEmailVerified(false);
+    setPendingEmailVerification(null);
     setDbSyncStatus('idle');
     setCurrentSessionId(null);
     activeSessionIdRef.current = null;
@@ -742,6 +931,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         profile,
         authProvider,
         emailVerified,
+        pendingEmailVerification,
         isFirebaseAuthenticated,
         needsOnboarding,
         dbSyncStatus,
@@ -762,9 +952,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signIn,
         signInWithEmail,
         signUpWithEmail,
+        sendPhoneVerificationCode,
+        confirmPhoneVerificationCode,
+        resetPhoneVerification,
         sendPasswordReset,
         resendVerificationEmail,
         refreshEmailVerification,
+        dismissPendingEmailVerification,
         changeUserPassword,
         completeOnboarding,
         revokeSession,

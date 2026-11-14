@@ -18,7 +18,7 @@ export enum AuthOperationType {
   WRITE = 'write',
 }
 
-export type AuthProviderType = 'google' | 'password';
+export type AuthProviderType = 'google' | 'password' | 'phone';
 
 interface FirestoreErrorInfo {
   error: string;
@@ -66,7 +66,40 @@ export function handleAuthFirestoreError(
 export const USERNAME_REGEX = /^[a-zA-Z0-9_]{3,30}$/;
 export const USERNAME_KEY_REGEX = /^[a-z0-9_]{3,30}$/;
 export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+export const E164_PHONE_REGEX = /^\+[1-9]\d{6,14}$/;
 const SESSION_STORAGE_KEY = 'instavibe_auth_session_id';
+
+export interface CountryCallingOption {
+  code: string;
+  labelAr: string;
+  labelEn: string;
+}
+
+export const COUNTRY_CALLING_CODES: CountryCallingOption[] = [
+  { code: '+966', labelAr: 'السعودية (+966)', labelEn: 'Saudi Arabia (+966)' },
+  { code: '+971', labelAr: 'الإمارات (+971)', labelEn: 'UAE (+971)' },
+  { code: '+20', labelAr: 'مصر (+20)', labelEn: 'Egypt (+20)' },
+  { code: '+962', labelAr: 'الأردن (+962)', labelEn: 'Jordan (+962)' },
+  { code: '+965', labelAr: 'الكويت (+965)', labelEn: 'Kuwait (+965)' },
+  { code: '+974', labelAr: 'قطر (+974)', labelEn: 'Qatar (+974)' },
+  { code: '+973', labelAr: 'البحرين (+973)', labelEn: 'Bahrain (+973)' },
+  { code: '+968', labelAr: 'عُمان (+968)', labelEn: 'Oman (+968)' },
+  { code: '+964', labelAr: 'العراق (+964)', labelEn: 'Iraq (+964)' },
+  { code: '+961', labelAr: 'لبنان (+961)', labelEn: 'Lebanon (+961)' },
+  { code: '+970', labelAr: 'فلسطين (+970)', labelEn: 'Palestine (+970)' },
+  { code: '+963', labelAr: 'سوريا (+963)', labelEn: 'Syria (+963)' },
+  { code: '+967', labelAr: 'اليمن (+967)', labelEn: 'Yemen (+967)' },
+  { code: '+212', labelAr: 'المغرب (+212)', labelEn: 'Morocco (+212)' },
+  { code: '+213', labelAr: 'الجزائر (+213)', labelEn: 'Algeria (+213)' },
+  { code: '+216', labelAr: 'تونس (+216)', labelEn: 'Tunisia (+216)' },
+  { code: '+218', labelAr: 'ليبيا (+218)', labelEn: 'Libya (+218)' },
+  { code: '+249', labelAr: 'السودان (+249)', labelEn: 'Sudan (+249)' },
+  { code: '+90', labelAr: 'تركيا (+90)', labelEn: 'Turkey (+90)' },
+  { code: '+44', labelAr: 'المملكة المتحدة (+44)', labelEn: 'UK (+44)' },
+  { code: '+1', labelAr: 'الولايات المتحدة / كندا (+1)', labelEn: 'US / Canada (+1)' },
+  { code: '+33', labelAr: 'فرنسا (+33)', labelEn: 'France (+33)' },
+  { code: '+49', labelAr: 'ألمانيا (+49)', labelEn: 'Germany (+49)' },
+];
 
 export interface LoginSessionRecord {
   sessionId: string;
@@ -86,6 +119,37 @@ export interface PasswordStrengthResult {
   hasMixedOrSymbol: boolean;
   score: number;
   isValid: boolean;
+}
+
+export function normalizeDigits(input: string): string {
+  return input
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0));
+}
+
+export function normalizePhoneNumber(countryCode: string, localInput: string): string {
+  const converted = normalizeDigits(localInput).trim();
+  if (!converted) return '';
+
+  if (converted.startsWith('+')) {
+    const digitsOnly = converted.slice(1).replace(/\D/g, '');
+    return digitsOnly ? `+${digitsOnly}` : '';
+  }
+
+  if (converted.startsWith('00')) {
+    const digitsOnly = converted.slice(2).replace(/\D/g, '');
+    return digitsOnly ? `+${digitsOnly}` : '';
+  }
+
+  const codeDigits = normalizeDigits(countryCode).replace(/\D/g, '');
+  let localDigits = converted.replace(/\D/g, '');
+  localDigits = localDigits.replace(/^0+/, '');
+  if (!codeDigits || !localDigits) return '';
+  return `+${codeDigits}${localDigits}`;
+}
+
+export function isValidE164Phone(phone: string): boolean {
+  return E164_PHONE_REGEX.test(phone.trim());
 }
 
 export function isValidEmail(email: string): boolean {
@@ -112,7 +176,9 @@ export function evaluatePasswordStrength(password: string): PasswordStrengthResu
 export function detectAuthProvider(firebaseUser?: User | null): AuthProviderType {
   const providers = firebaseUser?.providerData?.map((p) => p.providerId) || [];
   if (providers.includes('google.com')) return 'google';
+  if (providers.includes('phone')) return 'phone';
   if (providers.includes('password')) return 'password';
+  if (firebaseUser?.phoneNumber && !firebaseUser?.email) return 'phone';
   return 'password';
 }
 
@@ -127,8 +193,8 @@ export function mapFirebaseAuthError(error: any, language: 'ar' | 'en'): string 
   switch (code) {
     case 'auth/operation-not-allowed':
       return isAr
-        ? 'طريقة تسجيل الدخول عبر البريد وكلمة المرور غير مفعّلة بعد في إعدادات Firebase Authentication. فعّل خيار Email/Password من لوحة تحكم Firebase.'
-        : 'Email/Password sign-in is not enabled in Firebase Authentication yet. Enable Email/Password under Sign-in method in Firebase Console.';
+        ? 'طريقة تسجيل الدخول المطلوبة غير مفعّلة بعد في إعدادات Firebase Authentication. فعّل المزوّد (Email/Password أو Phone) من لوحة تحكم Firebase.'
+        : 'This sign-in method is not enabled in Firebase Authentication yet. Enable it under Sign-in method in Firebase Console.';
     case 'auth/invalid-email':
       return isAr ? 'صيغة البريد الإلكتروني غير صالحة.' : 'Please enter a valid email address.';
     case 'auth/email-already-in-use':
@@ -145,6 +211,37 @@ export function mapFirebaseAuthError(error: any, language: 'ar' | 'en'): string 
       return isAr
         ? 'كلمة المرور ضعيفة جداً. استخدم 8 أحرف على الأقل تتضمن أحرفاً وأرقاماً.'
         : 'Password is too weak. Use at least 8 characters with letters and numbers.';
+    case 'auth/invalid-phone-number':
+      return isAr
+        ? 'رقم الهاتف غير صالح. أدخل الرقم بالصيغة الدولية الصحيحة (مثال: +966501234567).'
+        : 'Invalid phone number. Please enter a valid international number (e.g. +966501234567).';
+    case 'auth/missing-phone-number':
+      return isAr ? 'يرجى إدخال رقم الهاتف المحمول.' : 'Please enter your mobile phone number.';
+    case 'auth/invalid-verification-code':
+      return isAr
+        ? 'رمز التحقق (SMS) غير صحيح. يرجى التأكد من الأرقام الستة والمحاولة مجدداً.'
+        : 'Incorrect SMS verification code. Please check the 6-digit code and try again.';
+    case 'auth/missing-verification-code':
+      return isAr ? 'يرجى إدخال رمز التحقق المرسل إلى هاتفك.' : 'Please enter the verification code sent to your phone.';
+    case 'auth/code-expired':
+      return isAr
+        ? 'انتهت صلاحية رمز التحقق. يرجى طلب رمز جديد.'
+        : 'The verification code has expired. Please request a new code.';
+    case 'auth/invalid-verification-id':
+    case 'auth/missing-verification-id':
+      return isAr
+        ? 'انتهت جلسة التحقق من الهاتف. يرجى إعادة إرسال الرمز.'
+        : 'Phone verification session expired. Please resend the code.';
+    case 'auth/captcha-check-failed':
+    case 'auth/missing-recaptcha-token':
+    case 'auth/invalid-recaptcha-token':
+      return isAr
+        ? 'تعذر إكمال التحقق الأمني (reCAPTCHA). يرجى المحاولة مجدداً والتأكد من السماح للنطاق في Firebase Auth.'
+        : 'Security verification (reCAPTCHA) failed. Please try again and verify your domain is authorized in Firebase Auth.';
+    case 'auth/quota-exceeded':
+      return isAr
+        ? 'تم الوصول إلى الحد الأقصى لرسائل التحقق SMS في المشروع حالياً. حاول لاحقاً أو استخدم أرقام الاختبار.'
+        : 'SMS quota exceeded for this project right now. Try again later or use configured test numbers.';
     case 'auth/too-many-requests':
       return isAr
         ? 'تم تنفيذ محاولات متكررة كثيرة. يرجى الانتظار قليلاً ثم المحاولة مجدداً.'
@@ -163,9 +260,10 @@ export function mapFirebaseAuthError(error: any, language: 'ar' | 'en'): string 
         : 'Network error while reaching the authentication server. Check your connection and try again.';
     case 'auth/popup-blocked':
       return isAr
-        ? 'المتصفح منع نافذة تسجيل الدخول المنبثقة. يرجى السماح بالنوافذ المنبثقة أو استخدام البريد وكلمة المرور.'
-        : 'Sign-in popup was blocked by your browser. Please allow popups or use Email & Password.';
+        ? 'المتصفح منع نافذة تسجيل الدخول المنبثقة. يرجى السماح بالنوافذ المنبثقة أو استخدام البريد أو الهاتف.'
+        : 'Sign-in popup was blocked by your browser. Please allow popups or use Email / Phone.';
     case 'auth/unauthorized-domain':
+    case 'auth/app-not-authorized':
       return isAr
         ? 'هذا النطاق غير مصرح به في Firebase Auth بعد. أضف النطاق من إعدادات Firebase Console.'
         : 'This domain is not yet authorized in Firebase Authentication settings.';
@@ -180,7 +278,11 @@ export function normalizeUsernameKey(username: string): string {
   return username.trim().toLowerCase();
 }
 
-export function buildSuggestedUsername(email?: string | null, uid?: string): string {
+export function buildSuggestedUsername(
+  email?: string | null,
+  uid?: string,
+  phoneNumber?: string | null
+): string {
   const rawPrefix = (email?.split('@')[0] || '')
     .toLowerCase()
     .replace(/[^a-z0-9_]/g, '_')
@@ -189,10 +291,14 @@ export function buildSuggestedUsername(email?: string | null, uid?: string): str
   if (rawPrefix.length >= 3) {
     return rawPrefix.slice(0, 30);
   }
+  const phoneTail = (phoneNumber || '').replace(/\D/g, '').slice(-4);
   const suffix = (uid || Math.random().toString(36).slice(2, 10))
     .toLowerCase()
     .replace(/[^a-z0-9_]/g, '')
-    .slice(0, 8);
+    .slice(0, phoneTail ? 4 : 8);
+  if (phoneTail) {
+    return `user_${phoneTail}${suffix ? `_${suffix}` : ''}`.slice(0, 30);
+  }
   return `user_${suffix || 'member'}`.slice(0, 30);
 }
 
@@ -331,6 +437,7 @@ export async function revokeLoginSession(userId: string, sessionId: string): Pro
 export async function claimUsernameAndSaveProfile(params: {
   uid: string;
   email: string;
+  phoneNumber?: string;
   username: string;
   fullName: string;
   bio: string;
@@ -386,6 +493,7 @@ export async function claimUsernameAndSaveProfile(params: {
         bio: params.bio.trim().slice(0, 220),
         photoURL: params.photoURL.trim().slice(0, 900000),
         email: params.email.slice(0, 320),
+        phoneNumber: (params.phoneNumber || '').slice(0, 32),
         emailVerified: Boolean(params.emailVerified),
         authProvider: params.authProvider || 'google',
         onboardingCompleted: true,

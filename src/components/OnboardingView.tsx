@@ -35,7 +35,7 @@ export default function OnboardingView() {
   const [username, setUsername] = useState(() =>
     profile?.username && USERNAME_REGEX.test(profile.username)
       ? profile.username
-      : buildSuggestedUsername(user?.email, user?.uid)
+      : buildSuggestedUsername(user?.email, user?.uid, user?.phoneNumber)
   );
   const [fullName, setFullName] = useState(() => profile?.fullName || user?.displayName || '');
   const [bio, setBio] = useState(() => profile?.bio || '');
@@ -208,8 +208,8 @@ export default function OnboardingView() {
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400">
             {isAr
-              ? `مسجّل عبر ${user?.email || 'حسابك'}. اختر اسم مستخدم فريد لإتمام التسجيل.`
-              : `Signed in as ${user?.email || 'your account'}. Choose a unique username to finish registration.`}
+              ? `مسجّل عبر ${user?.phoneNumber || user?.email || 'حسابك'}. اختر اسم مستخدم فريد لإتمام التسجيل.`
+              : `Signed in as ${user?.phoneNumber || user?.email || 'your account'}. Choose a unique username to finish registration.`}
           </p>
         </div>
 

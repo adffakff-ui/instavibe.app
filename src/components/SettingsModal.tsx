@@ -956,18 +956,33 @@ export default function SettingsModal({
                       {profile?.email || user?.email || '—'}
                     </span>
                   </div>
+                  {(profile?.phoneNumber || user?.phoneNumber) && (
+                    <div className="p-3.5 flex items-center justify-between gap-3">
+                      <span className="text-slate-500 dark:text-slate-400">
+                        {language === 'ar' ? 'رقم الهاتف' : 'Phone Number'}
+                      </span>
+                      <span dir="ltr" className="font-semibold text-slate-900 dark:text-white truncate">
+                        {profile?.phoneNumber || user?.phoneNumber}
+                      </span>
+                    </div>
+                  )}
                   <div className="p-3.5 flex items-center justify-between gap-3">
                     <span className="text-slate-500 dark:text-slate-400">
                       {language === 'ar' ? 'مزود المصادقة' : 'Auth Provider'}
                     </span>
                     <span className="font-semibold text-slate-900 dark:text-white">
-                      {authProvider === 'password'
+                      {authProvider === 'phone'
+                        ? language === 'ar'
+                          ? 'رقم الهاتف (SMS)'
+                          : 'Phone Number (SMS)'
+                        : authProvider === 'password'
                         ? language === 'ar'
                           ? 'البريد الإلكتروني وكلمة المرور'
                           : 'Email & Password'
                         : 'Google'}
                     </span>
                   </div>
+                  {authProvider !== 'phone' && (
                   <div className="p-3.5 flex items-center justify-between gap-3">
                     <span className="text-slate-500 dark:text-slate-400">
                       {language === 'ar' ? 'توثيق البريد الإلكتروني' : 'Email Verification'}
@@ -1051,6 +1066,7 @@ export default function SettingsModal({
                       )}
                     </div>
                   </div>
+                  )}
                   <div className="p-3.5 flex items-center justify-between gap-3">
                     <span className="text-slate-500 dark:text-slate-400">
                       {language === 'ar' ? 'حالة قاعدة البيانات' : 'Database Sync'}
@@ -1208,7 +1224,11 @@ export default function SettingsModal({
                               </div>
                               <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-1.5">
                                 <span>
-                                  {session.provider === 'password'
+                                  {session.provider === 'phone'
+                                    ? language === 'ar'
+                                      ? 'رقم الهاتف'
+                                      : 'Phone'
+                                    : session.provider === 'password'
                                     ? language === 'ar'
                                       ? 'البريد الإلكتروني'
                                       : 'Email'

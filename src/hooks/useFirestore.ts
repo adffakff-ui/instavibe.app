@@ -810,10 +810,12 @@ export function useFirestore() {
 
       const authProvider = detectAuthProvider(auth.currentUser) || existingData.authProvider || 'google';
       const emailVerified = Boolean(auth.currentUser?.emailVerified ?? existingData.emailVerified);
+      const phoneNumber = auth.currentUser?.phoneNumber || existingData.phoneNumber || '';
 
       await claimUsernameAndSaveProfile({
         uid: userId,
         email,
+        phoneNumber,
         username: updates.username,
         fullName: updates.fullName,
         bio: updates.bio,
