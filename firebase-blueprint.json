@@ -6,15 +6,46 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string", "description": "Unique user ID" },
-        "username": { "type": "string", "description": "Display username" },
-        "fullName": { "type": "string", "description": "Full name of the user" },
-        "bio": { "type": "string", "description": "Short user biography" },
-        "photoURL": { "type": "string", "description": "URL to profile photo" },
-        "email": { "type": "string", "description": "User email address" },
+        "username": { "type": "string", "description": "Display username", "minLength": 3, "maxLength": 30 },
+        "usernameLower": { "type": "string", "description": "Normalized lowercase username", "minLength": 3, "maxLength": 30 },
+        "fullName": { "type": "string", "description": "Full name of the user", "maxLength": 80 },
+        "bio": { "type": "string", "description": "Short user biography", "maxLength": 220 },
+        "photoURL": { "type": "string", "description": "URL to profile photo", "maxLength": 900000 },
+        "email": { "type": "string", "description": "User email address", "maxLength": 320 },
+        "authProvider": { "type": "string", "enum": ["google"], "description": "Authentication provider" },
+        "onboardingCompleted": { "type": "boolean", "description": "Whether initial profile setup is finished" },
+        "lastLoginAt": { "type": "string", "format": "date-time", "description": "Timestamp of latest login" },
         "interests": { "type": "object", "description": "Map of tag names to interest scores" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "username", "email"]
+    },
+    "UsernameReservation": {
+      "title": "UsernameReservation",
+      "description": "Unique username ownership lock for registration and profile updates",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Owner user ID" },
+        "username": { "type": "string", "minLength": 3, "maxLength": 30 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "username", "createdAt"]
+    },
+    "LoginSession": {
+      "title": "LoginSession",
+      "description": "Authenticated device session record stored per user",
+      "type": "object",
+      "properties": {
+        "sessionId": { "type": "string", "description": "Unique client session identifier" },
+        "userId": { "type": "string", "description": "Owner user ID" },
+        "provider": { "type": "string", "enum": ["google"] },
+        "deviceLabel": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "platform": { "type": "string", "maxLength": 60 },
+        "status": { "type": "string", "enum": ["active", "revoked"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "lastActiveAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sessionId", "userId", "provider", "deviceLabel", "status", "createdAt", "lastActiveAt"]
     },
     "Post": {
       "title": "Post",
@@ -408,6 +439,14 @@
     "/users/{userId}/savedPosts/{postId}": {
       "schema": "SavedPost",
       "description": "Posts bookmarked by a user"
+    },
+    "/usernames/{usernameKey}": {
+      "schema": "UsernameReservation",
+      "description": "Unique lowercase username reservation records"
+    },
+    "/users/{userId}/loginSessions/{sessionId}": {
+      "schema": "LoginSession",
+      "description": "Active and revoked login sessions for a user"
     }
   }
 }

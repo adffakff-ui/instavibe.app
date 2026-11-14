@@ -34,8 +34,35 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'username', 'email'])
-        && data.keys().hasOnly(['uid', 'username', 'fullName', 'bio', 'photoURL', 'email', 'interests', 'createdAt'])
-        && data.uid == request.auth.uid;
+        && data.keys().hasOnly(['uid', 'username', 'usernameLower', 'fullName', 'bio', 'photoURL', 'email', 'authProvider', 'onboardingCompleted', 'lastLoginAt', 'interests', 'createdAt'])
+        && data.uid == request.auth.uid
+        && data.username is string && data.username.size() >= 3 && data.username.size() <= 30
+        && data.email is string && data.email.size() <= 320
+        && (!('usernameLower' in data) || data.usernameLower == null || (data.usernameLower is string && data.usernameLower.size() >= 3 && data.usernameLower.size() <= 30))
+        && (!('fullName' in data) || data.fullName == null || (data.fullName is string && data.fullName.size() <= 80))
+        && (!('bio' in data) || data.bio == null || (data.bio is string && data.bio.size() <= 220))
+        && (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 900000))
+        && (!('authProvider' in data) || data.authProvider in ['google'])
+        && (!('onboardingCompleted' in data) || data.onboardingCompleted is bool);
+    }
+
+    function isValidUsernameReservation(data) {
+      return data.keys().hasAll(['uid', 'username', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'username', 'createdAt'])
+        && data.uid == request.auth.uid
+        && data.username is string
+        && data.username.size() >= 3 && data.username.size() <= 30;
+    }
+
+    function isValidLoginSession(data) {
+      return data.keys().hasAll(['sessionId', 'userId', 'provider', 'deviceLabel', 'status', 'createdAt', 'lastActiveAt'])
+        && data.keys().hasOnly(['sessionId', 'userId', 'provider', 'deviceLabel', 'platform', 'status', 'createdAt', 'lastActiveAt'])
+        && isValidId(data.sessionId)
+        && data.userId == request.auth.uid
+        && data.provider in ['google']
+        && data.deviceLabel is string && data.deviceLabel.size() >= 1 && data.deviceLabel.size() <= 100
+        && (!('platform' in data) || data.platform == null || (data.platform is string && data.platform.size() <= 60))
+        && data.status in ['active', 'revoked'];
     }
 
     function isValidPost(data) {
@@ -234,13 +261,53 @@ service cloud.firestore {
       return exists(/databases/$(database)/documents/users/$(blockerId)/blockedUsers/$(userId));
     }
 
+    match /usernames/{usernameKey} {
+      allow get: if isSignedIn() && isValidId(usernameKey) && usernameKey.matches('^[a-z0-9_]{3,30}$');
+      allow list: if false;
+      allow create: if isSignedIn()
+        && isValidId(usernameKey)
+        && usernameKey.matches('^[a-z0-9_]{3,30}$')
+        && isValidUsernameReservation(incoming())
+        && incoming().username.lower() == usernameKey
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isSignedIn()
+        && isValidId(usernameKey)
+        && existing().uid == request.auth.uid;
+    }
+
     match /users/{userId} {
       allow get: if isSignedIn();
       allow list: if isSignedIn();
       allow create: if isSignedIn() && isValidUser(incoming()) && isOwner(userId);
-      allow update: if isSignedIn() && isOwner(userId) && isValidUser(incoming())
-        && incoming().uid == existing().uid;
-      
+      allow update: if isSignedIn()
+        && isOwner(userId)
+        && isValidUser(incoming())
+        && incoming().uid == existing().uid
+        && (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt);
+
+      match /loginSessions/{sessionId} {
+        allow get: if isSignedIn() && isOwner(userId) && isValidId(sessionId);
+        allow list: if isSignedIn() && isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isSignedIn()
+          && isOwner(userId)
+          && isValidId(sessionId)
+          && isValidLoginSession(incoming())
+          && incoming().sessionId == sessionId
+          && incoming().createdAt == request.time
+          && incoming().lastActiveAt == request.time;
+        allow update: if isSignedIn()
+          && isOwner(userId)
+          && isValidId(sessionId)
+          && isValidLoginSession(incoming())
+          && incoming().sessionId == existing().sessionId
+          && incoming().userId == existing().userId
+          && incoming().createdAt == existing().createdAt
+          && incoming().lastActiveAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'lastActiveAt', 'deviceLabel', 'platform']);
+        allow delete: if isSignedIn() && isOwner(userId) && isValidId(sessionId);
+      }
+
       match /blockedUsers/{blockedId} {
         allow get: if isSignedIn() && (isOwner(userId) || isOwner(blockedId));
         allow list: if isSignedIn() && isOwner(userId);

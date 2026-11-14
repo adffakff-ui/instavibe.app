@@ -61,7 +61,21 @@ export default function SettingsModal({
   onClose,
   onProfileUpdated,
 }: SettingsModalProps) {
-  const { user, profile, isFirebaseAuthenticated, blockedUsers, language, setLanguage, theme, setTheme, logOut } = useAuth();
+  const {
+    user,
+    profile,
+    isFirebaseAuthenticated,
+    dbSyncStatus,
+    loginSessions,
+    currentSessionId,
+    revokeSession,
+    blockedUsers,
+    language,
+    setLanguage,
+    theme,
+    setTheme,
+    logOut,
+  } = useAuth();
   const { updateUserProfile, unblockUser, loading } = useFirestore();
   const { isInstallable, isInstalled, install, publicAppUrl } = usePWAInstall();
 
@@ -75,6 +89,7 @@ export default function SettingsModal({
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
 
   const [showAccessModal, setShowAccessModal] = useState(false);
   const [cameraAccess, setCameraAccess] = useState(false);
@@ -303,10 +318,19 @@ export default function SettingsModal({
         text: language === 'ar' ? 'تم حفظ التعديلات بنجاح.' : 'Profile updated successfully.',
       });
     } catch (err: any) {
+      const errCode = err?.message || '';
       setFeedback({
         type: 'error',
         text:
-          language === 'ar'
+          errCode === 'USERNAME_TAKEN'
+            ? language === 'ar'
+              ? 'اسم المستخدم محجوز لحساب آخر. يرجى اختيار اسم مختلف.'
+              : 'That username is already taken by another account.'
+            : errCode === 'INVALID_USERNAME'
+            ? language === 'ar'
+              ? 'استخدم 3 إلى 30 حرفاً إنجليزياً أو رقماً أو _ فقط.'
+              : 'Use 3–30 English letters, numbers, or underscores (_).'
+            : language === 'ar'
             ? 'حدث خطأ أثناء حفظ التغييرات. يرجى المحاولة مجدداً.'
             : err?.message || 'Failed to save changes. Please try again.',
       });
@@ -844,19 +868,140 @@ export default function SettingsModal({
           {/* TAB 3: PRIVACY & ACCOUNT */}
           {activeTab === 'privacy' && (
             <div className="space-y-6">
-              {/* Account Info */}
-              <div className="space-y-1.5">
+              {/* Account Info & Database Sync */}
+              <div className="space-y-2">
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                  {language === 'ar' ? 'بيانات الحساب' : 'Account Details'}
+                  {language === 'ar' ? 'بيانات الحساب والربط' : 'Account & Database Sync'}
                 </h3>
-                <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 text-xs flex items-center justify-between gap-3">
-                  <span className="text-slate-500 dark:text-slate-400">
-                    {language === 'ar' ? 'البريد الإلكتروني' : 'Email'}
-                  </span>
-                  <span className="font-semibold text-slate-900 dark:text-white truncate">
-                    {profile?.email || user?.email || '—'}
+                <div className="rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/70 dark:border-slate-800 divide-y divide-slate-200/60 dark:divide-slate-800 text-xs">
+                  <div className="p-3.5 flex items-center justify-between gap-3">
+                    <span className="text-slate-500 dark:text-slate-400">
+                      {language === 'ar' ? 'البريد الإلكتروني' : 'Email'}
+                    </span>
+                    <span className="font-semibold text-slate-900 dark:text-white truncate">
+                      {profile?.email || user?.email || '—'}
+                    </span>
+                  </div>
+                  <div className="p-3.5 flex items-center justify-between gap-3">
+                    <span className="text-slate-500 dark:text-slate-400">
+                      {language === 'ar' ? 'مزود المصادقة' : 'Auth Provider'}
+                    </span>
+                    <span className="font-semibold text-slate-900 dark:text-white">
+                      Google
+                    </span>
+                  </div>
+                  <div className="p-3.5 flex items-center justify-between gap-3">
+                    <span className="text-slate-500 dark:text-slate-400">
+                      {language === 'ar' ? 'حالة قاعدة البيانات' : 'Database Sync'}
+                    </span>
+                    <span
+                      className={`font-bold ${
+                        dbSyncStatus === 'connected'
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : dbSyncStatus === 'error'
+                          ? 'text-rose-600 dark:text-rose-400'
+                          : 'text-slate-500'
+                      }`}
+                    >
+                      {dbSyncStatus === 'connected'
+                        ? language === 'ar'
+                          ? 'متصل ومتزامن'
+                          : 'Connected & Synced'
+                        : dbSyncStatus === 'error'
+                        ? language === 'ar'
+                          ? 'خطأ في المزامنة'
+                          : 'Sync Error'
+                        : language === 'ar'
+                        ? 'جاري الاتصال...'
+                        : 'Connecting...'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-100 dark:border-slate-800" />
+
+              {/* Active Login Sessions */}
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    {language === 'ar' ? 'جلسات تسجيل الدخول النشطة' : 'Active Login Sessions'}
+                  </h3>
+                  <span className="text-xs text-slate-400 tabular-nums">
+                    {loginSessions.filter((s) => s.status === 'active').length}
                   </span>
                 </div>
+                {loginSessions.filter((s) => s.status === 'active').length === 0 ? (
+                  <p className="text-xs text-slate-500 dark:text-slate-400 py-1">
+                    {language === 'ar'
+                      ? 'لا توجد جلسات نشطة مسجلة حالياً.'
+                      : 'No active sessions recorded yet.'}
+                  </p>
+                ) : (
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800 border border-slate-200/80 dark:border-slate-800 rounded-xl overflow-hidden">
+                    {loginSessions
+                      .filter((s) => s.status === 'active')
+                      .slice(0, 6)
+                      .map((session) => {
+                        const isCurrent = session.sessionId === currentSessionId;
+                        const lastSeenDate = session.lastActiveAt?.toDate?.();
+                        return (
+                          <div
+                            key={session.sessionId}
+                            className="p-3 bg-white dark:bg-slate-900 flex items-center justify-between gap-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                                  {session.deviceLabel}
+                                </p>
+                                {isCurrent && (
+                                  <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 shrink-0">
+                                    {language === 'ar' ? 'الجلسة الحالية' : 'Current'}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                                {lastSeenDate
+                                  ? lastSeenDate.toLocaleString(language === 'ar' ? 'ar-EG' : 'en-US', {
+                                      month: 'short',
+                                      day: 'numeric',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })
+                                  : language === 'ar'
+                                  ? 'نشط الآن'
+                                  : 'Active now'}
+                              </p>
+                            </div>
+                            {!isCurrent && (
+                              <button
+                                type="button"
+                                disabled={revokingSessionId === session.sessionId}
+                                onClick={async () => {
+                                  setRevokingSessionId(session.sessionId);
+                                  try {
+                                    await revokeSession(session.sessionId);
+                                  } finally {
+                                    setRevokingSessionId(null);
+                                  }
+                                }}
+                                className="min-h-[34px] px-3 py-1.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/60 text-rose-600 dark:text-rose-400 text-xs font-semibold shrink-0 disabled:opacity-50"
+                              >
+                                {revokingSessionId === session.sessionId ? (
+                                  <Loader2 size={13} className="animate-spin" />
+                                ) : language === 'ar' ? (
+                                  'إنهاء'
+                                ) : (
+                                  'Revoke'
+                                )}
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
               </div>
 
               <div className="border-t border-slate-100 dark:border-slate-800" />

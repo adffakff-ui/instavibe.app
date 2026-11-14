@@ -19,6 +19,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
+import { claimUsernameAndSaveProfile } from '../lib/authService';
 import { ReactionType, normalizeReaction } from '../utils/reactions';
 
 export enum OperationType {
@@ -802,22 +803,24 @@ export function useFirestore() {
   ) => {
     setLoading(true);
     try {
-      const cleanUsername = updates.username.trim().slice(0, 30);
-      if (cleanUsername.length < 3) {
-        throw new Error('Username must be at least 3 characters');
+      const userSnap = await getDoc(doc(db, 'users', userId));
+      const existingData = userSnap.exists() ? userSnap.data() : {};
+      const email = existingData.email || auth.currentUser?.email || '';
+      const previousUsername = existingData.username || '';
+
+      await claimUsernameAndSaveProfile({
+        uid: userId,
+        email,
+        username: updates.username,
+        fullName: updates.fullName,
+        bio: updates.bio,
+        photoURL: updates.photoURL,
+        previousUsername,
+      });
+    } catch (error: any) {
+      if (error?.message === 'USERNAME_TAKEN' || error?.message === 'INVALID_USERNAME') {
+        throw error;
       }
-      await setDoc(
-        doc(db, 'users', userId),
-        {
-          uid: userId,
-          username: cleanUsername,
-          fullName: updates.fullName.trim().slice(0, 80),
-          bio: updates.bio.trim().slice(0, 220),
-          photoURL: updates.photoURL.trim().slice(0, 900000),
-        },
-        { merge: true }
-      );
-    } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users/${userId}`, true);
     } finally {
       setLoading(false);
