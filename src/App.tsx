@@ -12,13 +12,13 @@ import ReelsView from './components/ReelsView';
 import LiveView from './components/LiveView';
 import { OfflineIndicator, PWAInstallModal } from './components/PWAInstallModal';
 import { usePWAInstall } from './hooks/usePWAInstall';
-import { LogIn, Download, Smartphone } from 'lucide-react';
+import { LogIn, Download, Smartphone, AlertCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useBlockedConversationListener } from './hooks/useBlockedConversationListener';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 
 function AppContent() {
-  const { user, loading, signIn, language, setLanguage, blockedUsers } = useAuth();
+  const { user, loading, authError, signIn, language, setLanguage, blockedUsers } = useAuth();
   const { isInstalled, isInstallable, install } = usePWAInstall();
   const [view, setView] = useState<'feed' | 'messages' | 'explore' | 'profile' | 'notifications' | 'discover' | 'analytics' | 'reels' | 'live'>('feed');
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
@@ -83,6 +83,12 @@ function AppContent() {
             </p>
           </div>
           <div className="space-y-3">
+            {authError && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-xs font-medium text-start flex items-start gap-2">
+                <AlertCircle size={15} className="shrink-0 mt-0.5 text-rose-500" />
+                <span>{authError}</span>
+              </div>
+            )}
             <button
               type="button"
               onClick={signIn}
@@ -207,10 +213,13 @@ function AppContent() {
 }
 
 export default function App() {
+  const isVercelHost =
+    typeof window !== 'undefined' && window.location.hostname.endsWith('.vercel.app');
+
   return (
     <AuthProvider>
       <AppContent />
-      <SpeedInsights />
+      {isVercelHost && <SpeedInsights />}
     </AuthProvider>
   );
 }

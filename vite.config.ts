@@ -47,19 +47,28 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: [
-          'manifest.json',
-          'icon.svg',
-          'apple-touch-icon.png',
-          'pwa-192x192.png',
-          'pwa-512x512.png',
-          'pwa-maskable-512x512.png',
-        ],
+        includeAssets: [],
         manifest: false,
         workbox: {
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          globPatterns: ['assets/**/*.{js,css}', '**/*.{ico,png,svg,woff,woff2}'],
+          globIgnores: ['**/sw.js', '**/workbox-*.js'],
+          cleanupOutdatedCaches: true,
+          clientsClaim: true,
+          skipWaiting: true,
+          navigateFallback: null,
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           runtimeCaching: [
+            {
+              urlPattern: ({request}) => request.mode === 'navigate',
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'html-pages-cache',
+                networkTimeoutSeconds: 4,
+                cacheableResponse: {
+                  statuses: [200],
+                },
+              },
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',
@@ -130,7 +139,18 @@ export default defineConfig(() => {
         'firebase/app',
         'firebase/auth',
         'firebase/firestore',
+        '@vercel/speed-insights/react',
       ],
+    },
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            firebase: ['firebase/app', 'firebase/auth', 'firebase/firestore'],
+            ui: ['lucide-react', 'motion/react'],
+          },
+        },
+      },
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

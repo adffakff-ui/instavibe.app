@@ -1,10 +1,20 @@
 import {createRoot} from 'react-dom/client';
 import {registerSW} from 'virtual:pwa-register';
 import App from './App.tsx';
+import ErrorBoundary from './components/ErrorBoundary.tsx';
 import './index.css';
 
 if (import.meta.env.PROD) {
-  registerSW({immediate: true});
+  try {
+    registerSW({
+      immediate: true,
+      onRegisterError(err) {
+        console.warn('Service worker registration notice:', err);
+      },
+    });
+  } catch (err) {
+    console.warn('PWA setup notice:', err);
+  }
 } else if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then((registrations) => {
     for (const registration of registrations) {
@@ -22,4 +32,8 @@ if (import.meta.env.PROD) {
   }
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+createRoot(document.getElementById('root')!).render(
+  <ErrorBoundary>
+    <App />
+  </ErrorBoundary>
+);
