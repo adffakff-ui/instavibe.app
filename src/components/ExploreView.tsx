@@ -26,7 +26,7 @@ export default function ExploreView({
   onOpenChat?: (convId: string) => void;
   initialTag?: string;
 }) {
-  const { user, followers, following, blockedUsers, language, t } = useAuth();
+  const { user, isFirebaseAuthenticated, followers, following, blockedUsers, language, t } = useAuth();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
@@ -69,6 +69,12 @@ export default function ExploreView({
 
   // Fetch explore posts
   useEffect(() => {
+    if (!isFirebaseAuthenticated) {
+      setExplorePosts([]);
+      setLoadingExplore(false);
+      return;
+    }
+
     const fetchExplore = async () => {
       try {
         const q = query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(60));
@@ -79,13 +85,13 @@ export default function ExploreView({
 
         setExplorePosts(posts);
       } catch (error) {
-        console.error('Error fetching explore posts:', error);
+        console.warn('Explore posts fetch notice:', error);
       } finally {
         setLoadingExplore(false);
       }
     };
     fetchExplore();
-  }, [blockedUsers]);
+  }, [blockedUsers, isFirebaseAuthenticated]);
 
   // Extract trending hashtags from explore posts dynamically
   const trendingHashtags = useMemo(() => {
@@ -114,6 +120,13 @@ export default function ExploreView({
     if (!term || term.length < 2) {
       setSearchResults([]);
       setPostSearchResults([]);
+      return;
+    }
+
+    if (!isFirebaseAuthenticated) {
+      setSearchResults([]);
+      setPostSearchResults([]);
+      setSearching(false);
       return;
     }
 

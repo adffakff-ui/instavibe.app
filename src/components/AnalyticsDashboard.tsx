@@ -26,14 +26,19 @@ function getPostTimestampMs(post: any): number {
 }
 
 export default function AnalyticsDashboard() {
-  const { user, profile, language } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, language } = useAuth();
   const [allPosts, setAllPosts] = useState<any[]>([]);
   const [totalFollowers, setTotalFollowers] = useState(0);
   const [timeframe, setTimeframe] = useState<'30d' | '7d'>('30d');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isFirebaseAuthenticated) {
+      setAllPosts([]);
+      setTotalFollowers(0);
+      setLoading(false);
+      return;
+    }
 
     const fetchAnalytics = async () => {
       setLoading(true);
@@ -54,7 +59,7 @@ export default function AnalyticsDashboard() {
         setAllPosts(posts);
         setTotalFollowers(followersSnap.size);
       } catch (error) {
-        console.error('Analytics Error:', error);
+        console.warn('Analytics fetch notice:', error);
         setAllPosts([]);
         setTotalFollowers(0);
       } finally {
@@ -63,7 +68,7 @@ export default function AnalyticsDashboard() {
     };
 
     fetchAnalytics();
-  }, [user]);
+  }, [user, isFirebaseAuthenticated]);
 
   const {
     filteredPosts,

@@ -9,7 +9,7 @@ import { getSavedStoryDrafts } from '../utils/storyDrafts';
 import UserAvatar from './UserAvatar';
 
 export default function StoryBar() {
-  const { user, profile, blockedUsers, language, t } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, blockedUsers, language, t } = useAuth();
   const [stories, setStories] = useState<StoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreation, setShowCreation] = useState(false);
@@ -49,6 +49,12 @@ export default function StoryBar() {
   };
 
   useEffect(() => {
+    if (!isFirebaseAuthenticated) {
+      setStories([]);
+      setLoading(false);
+      return;
+    }
+
     const q = query(
       collection(db, 'stories'),
       orderBy('createdAt', 'desc'),
@@ -95,7 +101,7 @@ export default function StoryBar() {
     );
 
     return unsubscribe;
-  }, [blockedUsers]);
+  }, [blockedUsers, isFirebaseAuthenticated]);
 
   // Group active stories by authorId
   const groupedStories = stories.reduce<{ [key: string]: { authorId: string; authorUsername: string; authorPhotoURL: string; stories: StoryItem[] } }>((acc, story) => {

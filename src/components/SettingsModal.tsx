@@ -17,6 +17,7 @@ import {
   Smartphone,
   Share2,
   Download,
+  Trash2,
 } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -52,7 +53,7 @@ export default function SettingsModal({
   onClose,
   onProfileUpdated,
 }: SettingsModalProps) {
-  const { user, profile, blockedUsers, language, setLanguage, theme, setTheme, logOut } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, blockedUsers, language, setLanguage, theme, setTheme, logOut } = useAuth();
   const { updateUserProfile, unblockUser, loading } = useFirestore();
   const { isInstallable, isInstalled, install, publicAppUrl } = usePWAInstall();
 
@@ -65,6 +66,7 @@ export default function SettingsModal({
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const [blockedProfiles, setBlockedProfiles] = useState<BlockedUserItem[]>([]);
   const [loadingBlocked, setLoadingBlocked] = useState(false);
@@ -77,6 +79,7 @@ export default function SettingsModal({
       setActiveTab(initialTab);
       setFeedback(null);
       setConfirmLogout(false);
+      setConfirmReset(false);
     }
   }, [isOpen, initialTab]);
 
@@ -100,8 +103,13 @@ export default function SettingsModal({
 
   useEffect(() => {
     if (!isOpen || activeTab !== 'privacy') return;
-    if (blockedUsers.length === 0) {
-      setBlockedProfiles([]);
+    if (blockedUsers.length === 0 || !isFirebaseAuthenticated) {
+      setBlockedProfiles(
+        blockedUsers.map((uid) => ({
+          uid,
+          username: uid.slice(0, 8),
+        }))
+      );
       return;
     }
 
@@ -145,7 +153,7 @@ export default function SettingsModal({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, activeTab, blockedUsers]);
+  }, [isOpen, activeTab, blockedUsers, isFirebaseAuthenticated]);
 
   if (!isOpen) return null;
 
@@ -203,6 +211,16 @@ export default function SettingsModal({
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
+    if (!isFirebaseAuthenticated) {
+      setFeedback({
+        type: 'error',
+        text:
+          language === 'ar'
+            ? 'يرجى تسجيل الدخول بحساب Google لحفظ تعديلات الملف الشخصي.'
+            : 'Please sign in with Google to save profile changes.',
+      });
+      return;
+    }
     setFeedback(null);
 
     const trimmedUsername = username.trim();
@@ -247,7 +265,7 @@ export default function SettingsModal({
   };
 
   const handleUnblockUser = async (targetUid: string) => {
-    if (!user) return;
+    if (!user || !isFirebaseAuthenticated) return;
     setUnblockingId(targetUid);
     try {
       await unblockUser(user.uid, targetUid);
@@ -260,6 +278,30 @@ export default function SettingsModal({
   const handleConfirmLogout = async () => {
     await logOut();
     onClose();
+  };
+
+  const handleResetAppData = async () => {
+    try {
+      const keys = Object.keys(localStorage);
+      keys.forEach((key) => {
+        if (key.startsWith('instavibe')) {
+          localStorage.removeItem(key);
+        }
+      });
+      if ('caches' in window) {
+        const cacheNames = await caches.keys();
+        await Promise.all(cacheNames.map((name) => caches.delete(name)));
+      }
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(registrations.map((reg) => reg.unregister()));
+      }
+      await logOut();
+    } catch (e) {
+      console.error('Reset error:', e);
+    } finally {
+      window.location.reload();
+    }
   };
 
   const tabs: { id: SettingsTab; label: string; icon: React.ComponentType<{ size?: number }> }[] = [
@@ -718,6 +760,46 @@ export default function SettingsModal({
                         className="min-h-[40px] py-2 px-3 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold"
                       >
                         {language === 'ar' ? 'تأكيد الخروج' : 'Confirm Log Out'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-slate-100 dark:border-slate-800" />
+
+              {/* Reset App Data Section */}
+              <div className="space-y-2">
+                {!confirmReset ? (
+                  <button
+                    type="button"
+                    onClick={() => setConfirmReset(true)}
+                    className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50 text-amber-700 dark:text-amber-300 text-sm font-semibold flex items-center justify-center gap-2 transition-colors whitespace-nowrap"
+                  >
+                    <Trash2 size={16} />
+                    <span>{language === 'ar' ? 'تصفير بيانات التطبيق والذاكرة المؤقتة' : 'Reset App Data & Cache'}</span>
+                  </button>
+                ) : (
+                  <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 space-y-2.5">
+                    <p className="text-xs font-semibold text-amber-800 dark:text-amber-200 text-center">
+                      {language === 'ar'
+                        ? 'هل تريد بالتأكيد تصفير ومسح جميع بيانات الذاكرة المحلية والمسودات؟'
+                        : 'Are you sure you want to reset and clear all local data & drafts?'}
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setConfirmReset(false)}
+                        className="min-h-[40px] py-2 px-3 rounded-lg bg-white dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                      >
+                        {language === 'ar' ? 'إلغاء' : 'Cancel'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleResetAppData}
+                        className="min-h-[40px] py-2 px-3 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold"
+                      >
+                        {language === 'ar' ? 'تأكيد التصفير' : 'Confirm Reset'}
                       </button>
                     </div>
                   </div>

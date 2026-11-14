@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, getDocs, doc, getDoc, onSnapshot, limit } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, setDoc, serverTimestamp, deleteDoc, onSnapshot, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
@@ -68,7 +68,7 @@ export default function ProfileView({
   onOpenProfile?: (uid: string) => void;
   onSelectTag?: (tag: string) => void;
 }) {
-  const { user: currentUser, profile: currentProfile, followers, following, blockedUsers, language, t } = useAuth();
+  const { user: currentUser, profile: currentProfile, isFirebaseAuthenticated, signIn, followers, following, blockedUsers, language, t } = useAuth();
   const {
     removeFollower,
     getOrCreateConversation,
@@ -79,9 +79,34 @@ export default function ProfileView({
     createStory,
     deleteStory,
     archiveStory,
+    unsavePost,
   } = useFirestore();
 
-  const [profile, setProfile] = useState<any>(null);
+  const isOwnProfile = currentUser?.uid === userId;
+
+  const ownFallback = useMemo(() => {
+    if (!currentUser) return null;
+    return (
+      currentProfile || {
+        uid: currentUser.uid,
+        username:
+          currentUser.displayName?.replace(/\s+/g, '_').toLowerCase() ||
+          (currentUser.email ? currentUser.email.split('@')[0] : 'user'),
+        fullName: currentUser.displayName || '',
+        email: currentUser.email || '',
+        photoURL: currentUser.photoURL || '',
+        bio: '',
+      }
+    );
+  }, [currentUser, currentProfile]);
+
+  const [profile, setProfile] = useState<any>(() => {
+    return isOwnProfile ? (currentProfile || ownFallback) : null;
+  });
+
+  const activeProfile = useMemo(() => {
+    return profile || (isOwnProfile ? ownFallback : null);
+  }, [profile, isOwnProfile, ownFallback]);
   const [posts, setPosts] = useState<any[]>([]);
   const [highlights, setHighlights] = useState<any[]>([]);
   const [myStories, setMyStories] = useState<StoryItem[]>([]);
@@ -89,7 +114,7 @@ export default function ProfileView({
   const [nowTick, setNowTick] = useState(() => Date.now());
   const [followersCount, setFollowersCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!isOwnProfile);
   const [isBlockedByTarget, setIsBlockedByTarget] = useState(false);
   const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false);
   const [blockingInProgress, setBlockingInProgress] = useState(false);
@@ -130,7 +155,6 @@ export default function ProfileView({
   const [followListSearch, setFollowListSearch] = useState('');
   const [removingFollowerId, setRemovingFollowerId] = useState<string | null>(null);
 
-  const isOwnProfile = currentUser?.uid === userId;
   const followsMe = followers.includes(userId) && !following.includes(userId);
   const hasBlocked = blockedUsers.includes(userId);
 
@@ -145,45 +169,113 @@ export default function ProfileView({
     }
   }, [isOwnProfile, profileTab]);
 
+  // Keep own profile updated whenever auth context profile updates
+  useEffect(() => {
+    if (isOwnProfile && currentProfile) {
+      setProfile(currentProfile);
+    }
+  }, [isOwnProfile, currentProfile]);
+
   useEffect(() => {
     if (!userId) return;
 
+    if (!isFirebaseAuthenticated) {
+      setIsBlockedByTarget(false);
+      if (isOwnProfile) {
+        setProfile(currentProfile || ownFallback);
+      } else {
+        setProfile(null);
+      }
+      setPosts([]);
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
     const fetchData = async () => {
-      setLoading(true);
+      if (!isOwnProfile || !profile) {
+        setLoading(true);
+      }
       setIsBlockedByTarget(false);
       try {
-        if (currentUser) {
-          const blockSnap = await getDoc(doc(db, 'users', userId, 'blockedUsers', currentUser.uid));
-          if (blockSnap.exists()) {
-            setIsBlockedByTarget(true);
-            setLoading(false);
-            return;
+        if (currentUser && !isOwnProfile) {
+          try {
+            const blockSnap = await getDoc(doc(db, 'users', userId, 'blockedUsers', currentUser.uid));
+            if (blockSnap.exists()) {
+              if (!cancelled) {
+                setIsBlockedByTarget(true);
+                setLoading(false);
+              }
+              return;
+            }
+          } catch {
+            // ignore blocked check errors
           }
         }
 
         const userSnap = await getDoc(doc(db, 'users', userId));
+        if (cancelled) return;
+
         if (userSnap.exists()) {
           setProfile(userSnap.data());
+        } else if (isOwnProfile) {
+          const resolvedOwn = currentProfile || ownFallback;
+          if (resolvedOwn) {
+            setProfile(resolvedOwn);
+            // Auto-heal doc in firestore so future queries find it
+            try {
+              await setDoc(
+                doc(db, 'users', userId),
+                {
+                  uid: userId,
+                  username: resolvedOwn.username || 'user',
+                  fullName: resolvedOwn.fullName || '',
+                  bio: resolvedOwn.bio || '',
+                  photoURL: resolvedOwn.photoURL || '',
+                  email: resolvedOwn.email || currentUser?.email || '',
+                  createdAt: serverTimestamp(),
+                },
+                { merge: true }
+              );
+            } catch (e) {
+              console.warn('Profile bootstrap in firestore notice:', e);
+            }
+          }
         } else {
           setProfile(null);
         }
 
         const postsQ = query(collection(db, 'posts'), where('authorId', '==', userId));
         const postsSnap = await getDocs(postsQ);
-        setPosts(postsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        if (!cancelled) {
+          setPosts(postsSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        }
       } catch (error) {
-        console.error('Error fetching profile data:', error);
+        console.warn('Profile data fetch notice:', error);
+        if (!cancelled && isOwnProfile) {
+          setProfile(currentProfile || ownFallback);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     };
 
     fetchData();
-  }, [userId, currentUser]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, currentUser, isOwnProfile, isFirebaseAuthenticated, currentProfile, ownFallback]);
 
   // Real-time listeners for Followers & Following counts on this profile
   useEffect(() => {
-    if (!userId || !currentUser) return;
+    if (!userId || !currentUser || !isFirebaseAuthenticated) {
+      setFollowersCount(0);
+      setFollowingCount(0);
+      return;
+    }
 
     const unsubFollowers = onSnapshot(
       collection(db, 'users', userId, 'followers'),
@@ -201,11 +293,14 @@ export default function ProfileView({
       unsubFollowers();
       unsubFollowing();
     };
-  }, [userId, currentUser]);
+  }, [userId, currentUser, isFirebaseAuthenticated]);
 
   // Real-time listener for user highlights
   useEffect(() => {
-    if (!userId) return;
+    if (!userId || !isFirebaseAuthenticated) {
+      setHighlights([]);
+      return;
+    }
     const highlightsQ = query(collection(db, 'users', userId, 'highlights'));
     const unsubscribe = onSnapshot(
       highlightsQ,
@@ -218,12 +313,13 @@ export default function ProfileView({
       }
     );
     return unsubscribe;
-  }, [userId]);
+  }, [userId, isFirebaseAuthenticated]);
 
   // Real-time listener for own stories -> automatically classifies expired stories into Archives
   useEffect(() => {
-    if (!userId || !isOwnProfile) {
+    if (!userId || !isOwnProfile || !isFirebaseAuthenticated) {
       setMyStories([]);
+      setLoadingArchives(false);
       return;
     }
 
@@ -237,8 +333,8 @@ export default function ProfileView({
           return {
             id: d.id,
             authorId: data.authorId,
-            authorUsername: data.authorUsername || profile?.username || 'User',
-            authorPhotoURL: data.authorPhotoURL || profile?.photoURL || '',
+            authorUsername: data.authorUsername || activeProfile?.username || 'User',
+            authorPhotoURL: data.authorPhotoURL || activeProfile?.photoURL || '',
             mediaURL: data.mediaURL,
             mediaType: data.mediaType || 'image',
             caption: data.caption || '',
@@ -263,7 +359,7 @@ export default function ProfileView({
       unsubscribe();
       clearInterval(interval);
     };
-  }, [userId, isOwnProfile]);
+  }, [userId, isOwnProfile, isFirebaseAuthenticated, activeProfile?.username, activeProfile?.photoURL]);
 
   const { archivedStories, activeStories } = useMemo(() => {
     const expired: StoryItem[] = [];
@@ -280,13 +376,17 @@ export default function ProfileView({
 
   // Real-time listener for Saved posts (own profile only)
   useEffect(() => {
-    if (!isOwnProfile || !currentUser?.uid) {
+    if (!isOwnProfile || !currentUser?.uid || !isFirebaseAuthenticated) {
       setSavedPosts([]);
       return;
     }
 
-    const unsub = onSnapshot(
+    const savedQ = query(
       collection(db, 'users', currentUser.uid, 'savedPosts'),
+      where('userId', '==', currentUser.uid)
+    );
+    const unsub = onSnapshot(
+      savedQ,
       (snap) => {
         const items = snap.docs
           .map((d) => ({
@@ -296,21 +396,27 @@ export default function ProfileView({
           .sort((a: any, b: any) => getTimestampMs(b.savedAt) - getTimestampMs(a.savedAt));
         setSavedPosts(items);
       },
-      () => setSavedPosts([])
+      (err) => {
+        console.warn('Saved posts listener notice:', err);
+        setSavedPosts([]);
+      }
     );
 
     return unsub;
-  }, [isOwnProfile, currentUser?.uid]);
+  }, [isOwnProfile, currentUser?.uid, isFirebaseAuthenticated]);
 
   // Load posts mentioning @username when Tagged tab is opened
   useEffect(() => {
-    if (profileTab !== 'tagged' || !profile?.username) return;
+    if (profileTab !== 'tagged' || !activeProfile?.username || !isFirebaseAuthenticated) {
+      if (profileTab === 'tagged') setTaggedPosts([]);
+      return;
+    }
     let cancelled = false;
     const fetchTagged = async () => {
       setLoadingTagged(true);
       try {
         const snap = await getDocs(query(collection(db, 'posts'), limit(60)));
-        const mentionNeedle = `@${profile.username}`.toLowerCase();
+        const mentionNeedle = `@${activeProfile.username}`.toLowerCase();
         const matches = snap.docs
           .map((d) => ({ id: d.id, ...d.data() }))
           .filter((p: any) => !blockedUsers.includes(p.authorId))
@@ -328,11 +434,15 @@ export default function ProfileView({
     return () => {
       cancelled = true;
     };
-  }, [profileTab, profile?.username, blockedUsers]);
+  }, [profileTab, activeProfile?.username, blockedUsers, isFirebaseAuthenticated]);
 
   // Real-time Followers / Following user list modal when opened
   useEffect(() => {
-    if (!followListType || !userId || !currentUser) return;
+    if (!followListType || !userId || !currentUser || !isFirebaseAuthenticated) {
+      setFollowListUsers([]);
+      setLoadingFollowList(false);
+      return;
+    }
     setLoadingFollowList(true);
     let cancelled = false;
 
@@ -369,7 +479,7 @@ export default function ProfileView({
       cancelled = true;
       unsub();
     };
-  }, [followListType, userId, currentUser]);
+  }, [followListType, userId, currentUser, isFirebaseAuthenticated]);
 
   const filteredFollowListUsers = useMemo(() => {
     const q = followListSearch.trim().toLowerCase();
@@ -443,7 +553,7 @@ export default function ProfileView({
 
     setCreatingHighlight(true);
     try {
-      const coverURL = newHighlightCover.trim() || posts[0]?.mediaURL || profile?.photoURL || '';
+      const coverURL = newHighlightCover.trim() || posts[0]?.mediaURL || activeProfile?.photoURL || '';
       await createHighlightAlbum(currentUser.uid, newHighlightTitle.trim(), coverURL, []);
       setNewHighlightTitle('');
       setNewHighlightCover('');
@@ -477,7 +587,7 @@ export default function ProfileView({
       const coverURL =
         highlightTargetStory.mediaType !== 'video'
           ? highlightTargetStory.mediaURL
-          : profile?.photoURL || '';
+          : activeProfile?.photoURL || '';
       await createHighlightAlbum(currentUser.uid, newHighlightFromArchiveTitle.trim(), coverURL, [
         highlightTargetStory.id,
       ]);
@@ -571,13 +681,24 @@ export default function ProfileView({
     }
   };
 
-  if (loading) {
+  const handleQuickUnsave = async (e: React.MouseEvent, postId: string) => {
+    e.stopPropagation();
+    if (!currentUser?.uid || !postId) return;
+    try {
+      await unsavePost(currentUser.uid, postId);
+      showToast(language === 'ar' ? 'تمت إزالة المنشور من المحفوظات' : 'Removed from bookmarks');
+    } catch (err) {
+      console.error('Error removing bookmark:', err);
+    }
+  };
+
+  if (loading && !activeProfile) {
     return <ProfileSkeleton />;
   }
 
-  if (isBlockedByTarget) {
+  if (isBlockedByTarget && !isOwnProfile) {
     return (
-      <div className="text-center py-20 bg-slate-50 dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 m-4">
+      <div className="text-center py-20 bg-slate-50 dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 m-4 px-4">
         <p className="font-bold text-slate-900 dark:text-white">
           {language === 'ar' ? 'المستخدم غير موجود' : 'User not found'}
         </p>
@@ -586,26 +707,73 @@ export default function ProfileView({
             ? 'قد يكون الرابط معطلاً أو تمت إزالة الصفحة.'
             : 'The link may be broken, or the user may have removed the page.'}
         </p>
+        {onNavigateHome && (
+          <button
+            type="button"
+            onClick={onNavigateHome}
+            className="mt-4 px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold transition-colors shadow-sm"
+          >
+            {language === 'ar' ? 'العودة إلى الرئيسية' : 'Back to Home'}
+          </button>
+        )}
       </div>
     );
   }
 
-  if (!profile) {
+  if (!activeProfile) {
     return (
-      <div className="text-center py-20">
-        <p className="text-slate-500">{language === 'ar' ? 'المستخدم غير موجود.' : 'User not found.'}</p>
+      <div className="text-center py-20 bg-slate-50 dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 m-4 px-4">
+        <p className="font-bold text-slate-900 dark:text-white">
+          {language === 'ar' ? 'المستخدم غير موجود' : 'User not found'}
+        </p>
+        <p className="text-sm text-slate-500 mt-1">
+          {language === 'ar'
+            ? 'قد يكون الرابط معطلاً أو تمت إزالة هذا الحساب.'
+            : 'The link may be broken, or this account may have been removed.'}
+        </p>
+        {onNavigateHome && (
+          <button
+            type="button"
+            onClick={onNavigateHome}
+            className="mt-4 px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold transition-colors shadow-sm"
+          >
+            {language === 'ar' ? 'العودة إلى الرئيسية' : 'Back to Home'}
+          </button>
+        )}
       </div>
     );
   }
 
   return (
     <div className="max-w-screen-md mx-auto pb-20 space-y-6">
+      {isOwnProfile && !isFirebaseAuthenticated && (
+        <div className="mx-4 md:mx-0 p-3.5 rounded-2xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="text-xs text-purple-900 dark:text-purple-200">
+            <p className="font-bold">
+              {language === 'ar' ? 'أنت تتصفح بوضع الزائر التجريبي' : 'Guest Trial Mode'}
+            </p>
+            <p className="opacity-80 mt-0.5">
+              {language === 'ar'
+                ? 'سجّل الدخول عبر Google لحفظ منشوراتك ومزامنة محفوظاتك في السحابة.'
+                : 'Sign in with Google to sync your profile, posts, and private bookmarks.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={signIn}
+            className="min-h-[38px] px-4 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shrink-0 transition-colors shadow-sm"
+          >
+            {language === 'ar' ? 'تسجيل الدخول عبر Google' : 'Sign in with Google'}
+          </button>
+        </div>
+      )}
+
       {/* Profile Header */}
       <div className="flex flex-col md:flex-row items-center md:items-start gap-8 px-4 md:px-0">
         <div className="w-24 h-24 md:w-40 md:h-40 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100 dark:bg-slate-800">
           <UserAvatar
-            src={profile.photoURL}
-            username={profile.username}
+            src={activeProfile.photoURL}
+            username={activeProfile.username}
             iconSize={40}
           />
         </div>
@@ -613,7 +781,7 @@ export default function ProfileView({
         <div className="flex-1 space-y-4 text-center md:text-start">
           <div className="flex flex-col md:flex-row md:items-center gap-4">
             <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-white">{profile.username}</h2>
+              <h2 className="text-xl font-semibold text-slate-900 dark:text-white">{activeProfile.username}</h2>
               {!isOwnProfile && followsMe && (
                 <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
                   {t('followsYou')}
@@ -714,9 +882,9 @@ export default function ProfileView({
           </div>
 
           <div>
-            <p className="font-bold text-sm text-slate-900 dark:text-white">{profile.fullName}</p>
+            <p className="font-bold text-sm text-slate-900 dark:text-white">{activeProfile.fullName}</p>
             <p className="text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
-              {profile.bio || (language === 'ar' ? 'لا توجد نبذة تعريفية بعد.' : 'No bio yet.')}
+              {activeProfile.bio || (language === 'ar' ? 'لا توجد نبذة تعريفية بعد.' : 'No bio yet.')}
             </p>
           </div>
         </div>
@@ -800,18 +968,25 @@ export default function ProfileView({
             <Grid size={16} />
             {language === 'ar' ? 'المنشورات' : 'Posts'}
           </button>
-          <button
-            type="button"
-            onClick={() => setProfileTab('saved')}
-            className={`min-h-[44px] flex items-center gap-1.5 sm:gap-2 py-3 -mt-[9px] text-xs font-bold uppercase tracking-wider transition-colors whitespace-nowrap ${
-              profileTab === 'saved'
-                ? 'border-t-2 border-slate-900 dark:border-white text-slate-900 dark:text-white'
-                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
-            }`}
-          >
-            <Bookmark size={16} />
-            {language === 'ar' ? 'المحفوظات' : 'Saved'}
-          </button>
+          {isOwnProfile && (
+            <button
+              type="button"
+              onClick={() => setProfileTab('saved')}
+              className={`min-h-[44px] flex items-center gap-1.5 sm:gap-2 py-3 -mt-[9px] text-xs font-bold uppercase tracking-wider transition-colors whitespace-nowrap ${
+                profileTab === 'saved'
+                  ? 'border-t-2 border-purple-600 dark:border-purple-400 text-purple-600 dark:text-purple-400'
+                  : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+              }`}
+            >
+              <Bookmark size={16} className={profileTab === 'saved' ? 'fill-current' : ''} />
+              <span>{language === 'ar' ? 'المحفوظات' : 'Bookmarks'}</span>
+              {savedPosts.length > 0 && (
+                <span className="tabular-nums text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300">
+                  {savedPosts.length}
+                </span>
+              )}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setProfileTab('tagged')}
@@ -1078,37 +1253,112 @@ export default function ProfileView({
                 : 'Saved posts are private to the account owner.'}
             </p>
           </div>
-        ) : savedPosts.length === 0 ? (
-          <div className="text-center py-20 bg-slate-50 dark:bg-slate-900/40 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800 mx-4 md:mx-0">
-            <p className="text-slate-500 font-medium">
-              {language === 'ar' ? 'لا توجد منشورات محفوظة بعد.' : 'No saved posts yet.'}
-            </p>
-          </div>
         ) : (
-          <div className="grid grid-cols-3 gap-1 md:gap-4 px-1 md:px-0">
-            {savedPosts.map((post) => (
-              <button
-                key={post.id}
-                type="button"
-                onClick={() => setSelectedPost(post)}
-                className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden relative group cursor-pointer text-start"
-              >
-                {post.mediaType === 'video' ? (
-                  <>
-                    <video src={post.mediaURL} muted playsInline preload="metadata" className="w-full h-full object-cover" />
-                    <div className="absolute top-2 end-2 p-1 rounded-full bg-black/55 text-white">
-                      <Film size={12} />
-                    </div>
-                  </>
-                ) : (
-                  <img src={post.mediaURL} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                )}
-                <div className="absolute inset-0 bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4 text-white text-xs sm:text-sm font-bold tabular-nums">
-                  <span>❤️ {post.likesCount || 0}</span>
-                  <span>💬 {post.commentsCount || 0}</span>
+          <div className="space-y-4 px-2 sm:px-0">
+            {/* Private Bookmarks Collection Header Banner */}
+            <div className="p-3.5 sm:p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-purple-100 dark:bg-purple-950/80 text-purple-600 dark:text-purple-400 flex items-center justify-center shrink-0">
+                  <Bookmark size={18} className="fill-current" />
                 </div>
-              </button>
-            ))}
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      {language === 'ar' ? 'مجموعتك المحفوظة الخاصة' : 'Private Bookmarks Collection'}
+                    </h3>
+                    <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                      {language === 'ar' ? 'خاص بك فقط' : 'Private'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    {language === 'ar'
+                      ? 'لا يمكن لأي مستخدم آخر رؤية المنشورات التي قمت بحفظها هنا.'
+                      : 'Only you can see the posts and reels you have saved.'}
+                  </p>
+                </div>
+              </div>
+              {savedPosts.length > 0 && (
+                <span className="text-xs font-bold text-purple-600 dark:text-purple-400 shrink-0 tabular-nums">
+                  {savedPosts.length} {language === 'ar' ? 'منشور' : 'saved'}
+                </span>
+              )}
+            </div>
+
+            {savedPosts.length === 0 ? (
+              <div className="text-center py-16 px-4 bg-slate-50 dark:bg-slate-900/40 rounded-3xl border border-dashed border-slate-200 dark:border-slate-800">
+                <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-purple-50 dark:bg-purple-950/50 flex items-center justify-center text-purple-600 dark:text-purple-400">
+                  <Bookmark size={30} />
+                </div>
+                <h4 className="font-bold text-base text-slate-900 dark:text-white">
+                  {language === 'ar' ? 'لم تحفظ أي منشورات بعد' : 'No saved posts yet'}
+                </h4>
+                <p className="text-sm text-slate-500 dark:text-slate-400 max-w-sm mx-auto mt-1 mb-5">
+                  {language === 'ar'
+                    ? 'احفظ الصور ومقاطع الفيديو والريلز المفضلة لديك بنقرة واحدة على أيقونة الإشارة المرجعية لتجدها هنا دائماً.'
+                    : 'Save photos, videos, and reels with a single tap on the bookmark icon to find them here anytime.'}
+                </p>
+                {onNavigateHome && (
+                  <button
+                    type="button"
+                    onClick={onNavigateHome}
+                    className="min-h-[44px] px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold transition-colors shadow-sm active:scale-95"
+                  >
+                    {language === 'ar' ? 'استكشف المنشورات لحفظها' : 'Explore Posts to Save'}
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-1 md:gap-4">
+                {savedPosts.map((post) => (
+                  <div
+                    key={post.id}
+                    onClick={() => setSelectedPost(post)}
+                    className="aspect-square bg-slate-100 dark:bg-slate-800 overflow-hidden relative group cursor-pointer rounded-lg sm:rounded-xl border border-slate-200/50 dark:border-slate-800/80"
+                  >
+                    {post.mediaType === 'video' ? (
+                      <>
+                        <video
+                          src={post.mediaURL}
+                          muted
+                          playsInline
+                          preload="metadata"
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute top-2 end-2 p-1 rounded-full bg-black/60 text-white shadow-sm">
+                          <Film size={13} />
+                        </div>
+                      </>
+                    ) : (
+                      <img
+                        src={post.mediaURL}
+                        alt=""
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    )}
+
+                    {/* Hover stats & quick unsave */}
+                    <div className="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-2 text-white">
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={(e) => handleQuickUnsave(e, post.id)}
+                          title={language === 'ar' ? 'إزالة من المحفوظات' : 'Remove from bookmarks'}
+                          aria-label={language === 'ar' ? 'إزالة من المحفوظات' : 'Remove bookmark'}
+                          className="p-1.5 rounded-full bg-black/60 hover:bg-red-600 text-white transition-colors"
+                        >
+                          <Bookmark size={14} className="fill-current text-purple-400 hover:text-white" />
+                        </button>
+                      </div>
+                      <div className="flex items-center justify-center gap-4 text-xs sm:text-sm font-bold tabular-nums pb-2">
+                        <span>❤️ {post.likesCount || 0}</span>
+                        <span>💬 {post.commentsCount || 0}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )
       ) : profileTab === 'tagged' ? (
@@ -1350,8 +1600,8 @@ export default function ProfileView({
         isOpen={showBlockConfirmModal}
         onClose={() => setShowBlockConfirmModal(false)}
         onConfirm={handleConfirmBlock}
-        targetUsername={profile?.username}
-        targetPhotoURL={profile?.photoURL}
+        targetUsername={activeProfile?.username}
+        targetPhotoURL={activeProfile?.photoURL}
         isProcessing={blockingInProgress}
       />
 
@@ -1426,7 +1676,7 @@ export default function ProfileView({
             <div className="px-5 pt-3.5 pb-2 border-b border-slate-100 dark:border-slate-800 space-y-2.5">
               <div className="flex items-center justify-between">
                 <h3 className="font-bold text-sm text-slate-900 dark:text-white">
-                  @{profile.username}
+                  @{activeProfile.username}
                 </h3>
                 <button
                   type="button"

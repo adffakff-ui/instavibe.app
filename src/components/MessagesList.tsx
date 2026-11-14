@@ -8,13 +8,17 @@ import { ar } from 'date-fns/locale';
 import UserAvatar from './UserAvatar';
 
 export default function MessagesList({ onSelectConversation }: { onSelectConversation: (id: string) => void }) {
-  const { user, blockedUsers, language, t } = useAuth();
+  const { user, isFirebaseAuthenticated, blockedUsers, language, t } = useAuth();
   const [conversations, setConversations] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isFirebaseAuthenticated) {
+      setConversations([]);
+      setLoading(false);
+      return;
+    }
 
     const q = query(
       collection(db, 'conversations'),
@@ -68,7 +72,7 @@ export default function MessagesList({ onSelectConversation }: { onSelectConvers
     );
 
     return unsubscribe;
-  }, [user, blockedUsers]);
+  }, [user, isFirebaseAuthenticated, blockedUsers]);
 
   if (loading) {
     return (

@@ -806,14 +806,19 @@ export function useFirestore() {
       if (cleanUsername.length < 3) {
         throw new Error('Username must be at least 3 characters');
       }
-      await updateDoc(doc(db, 'users', userId), {
-        username: cleanUsername,
-        fullName: updates.fullName.trim().slice(0, 80),
-        bio: updates.bio.trim().slice(0, 220),
-        photoURL: updates.photoURL.trim().slice(0, 900000),
-      });
+      await setDoc(
+        doc(db, 'users', userId),
+        {
+          uid: userId,
+          username: cleanUsername,
+          fullName: updates.fullName.trim().slice(0, 80),
+          bio: updates.bio.trim().slice(0, 220),
+          photoURL: updates.photoURL.trim().slice(0, 900000),
+        },
+        { merge: true }
+      );
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `users/${userId}`, true);
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}`, true);
     } finally {
       setLoading(false);
     }

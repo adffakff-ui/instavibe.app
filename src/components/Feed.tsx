@@ -26,12 +26,18 @@ export default function Feed({
   onSelectTag?: (tag: string) => void;
   setView: (view: any) => void;
 }) {
-  const { user, following, blockedUsers, language } = useAuth();
+  const { user, isFirebaseAuthenticated, signIn, following, blockedUsers, language } = useAuth();
   const [posts, setPosts] = useState<any[]>([]);
   const [filter, setFilter] = useState<'all' | 'following'>('all');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!isFirebaseAuthenticated) {
+      setPosts([]);
+      setLoading(false);
+      return;
+    }
+
     const isFollowingFilter = filter === 'following' && Boolean(user);
 
     if (isFollowingFilter && following.length === 0) {
@@ -79,7 +85,7 @@ export default function Feed({
     );
 
     return unsubscribe;
-  }, [filter, following, user, blockedUsers]);
+  }, [filter, following, user, isFirebaseAuthenticated, blockedUsers]);
 
   return (
     <div className="space-y-6">
@@ -152,6 +158,27 @@ export default function Feed({
               onPostDeleted={(deletedId) => setPosts((prev) => prev.filter((p) => p.id !== deletedId))}
             />
           ))
+        ) : !isFirebaseAuthenticated ? (
+          <div className="text-center py-14 px-6 bg-white dark:bg-slate-900 rounded-2xl border border-purple-200 dark:border-purple-900/60 space-y-3">
+            <div className="w-12 h-12 rounded-2xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center mx-auto">
+              <ImageIcon size={22} />
+            </div>
+            <p className="text-slate-900 dark:text-white font-bold text-sm">
+              {language === 'ar' ? 'وضع المعاينة كضيف' : 'Guest Preview Mode'}
+            </p>
+            <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+              {language === 'ar'
+                ? 'سجّل الدخول بحساب Google لعرض المنشورات الحية، التفاعل معها، وحفظها في مجموعتك الخاصة.'
+                : 'Sign in with Google to view live posts, interact with creators, and save bookmarks.'}
+            </p>
+            <button
+              type="button"
+              onClick={signIn}
+              className="mt-2 min-h-[40px] px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-colors shadow-sm"
+            >
+              {language === 'ar' ? 'تسجيل الدخول عبر Google' : 'Sign in with Google'}
+            </button>
+          </div>
         ) : filter === 'following' ? (
           <div className="space-y-5">
             <div className="text-center py-12 px-6 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">

@@ -15,12 +15,15 @@ export default function Navigation({
   setView: (view: 'feed' | 'messages' | 'explore' | 'profile' | 'notifications' | 'discover' | 'analytics' | 'reels' | 'live') => void;
   onOpenInstall?: () => void;
 }) {
-  const { user, profile, logOut, language, setLanguage, t } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, logOut, language, setLanguage, t } = useAuth();
   const { isInstalled } = usePWAInstall();
   const [hasUnread, setHasUnread] = useState(false);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isFirebaseAuthenticated) {
+      setHasUnread(false);
+      return;
+    }
     const q = query(
       collection(db, 'users', user.uid, 'notifications'),
       where('read', '==', false)
@@ -35,7 +38,7 @@ export default function Navigation({
       }
     );
     return unsubscribe;
-  }, [user]);
+  }, [user, isFirebaseAuthenticated]);
 
   const desktopNavItems = [
     { icon: Home, labelKey: 'home', view: 'feed' as const },

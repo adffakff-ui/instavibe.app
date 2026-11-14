@@ -14,13 +14,17 @@ export default function NotificationsView({
 }: {
   onOpenProfile?: (uid: string) => void;
 }) {
-  const { user, blockedUsers, language } = useAuth();
+  const { user, isFirebaseAuthenticated, blockedUsers, language } = useAuth();
   const [notifications, setNotifications] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [markingAll, setMarkingAll] = useState(false);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isFirebaseAuthenticated) {
+      setNotifications([]);
+      setLoading(false);
+      return;
+    }
 
     const q = query(
       collection(db, 'users', user.uid, 'notifications'),
@@ -43,7 +47,7 @@ export default function NotificationsView({
     );
 
     return unsubscribe;
-  }, [user, blockedUsers]);
+  }, [user, isFirebaseAuthenticated, blockedUsers]);
 
   const markAsRead = async (notificationId: string) => {
     if (!user) return;

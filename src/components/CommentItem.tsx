@@ -32,7 +32,7 @@ export default function CommentItem({
   onOpenProfile,
   onReply,
 }: CommentItemProps) {
-  const { user, profile, language } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, language } = useAuth();
   const { likeComment, unlikeComment } = useFirestore();
 
   const [isLiked, setIsLiked] = useState<boolean>(false);
@@ -48,7 +48,7 @@ export default function CommentItem({
 
   // Real-time listener for whether the current user liked this comment in Firestore
   useEffect(() => {
-    if (!user || !comment.id || !postId) return;
+    if (!user || !isFirebaseAuthenticated || !comment.id || !postId) return;
 
     const likeRef = doc(db, 'posts', postId, 'comments', comment.id, 'likes', user.uid);
     const unsubscribe = onSnapshot(
@@ -64,7 +64,7 @@ export default function CommentItem({
     );
 
     return unsubscribe;
-  }, [postId, comment.id, user]);
+  }, [postId, comment.id, user, isFirebaseAuthenticated]);
 
   const handleToggleLike = async () => {
     if (!user || pendingRef.current) return;

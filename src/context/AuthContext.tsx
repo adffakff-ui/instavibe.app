@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { onAuthStateChanged, User, signInWithPopup, GoogleAuthProvider, signOut, signInAnonymously } from 'firebase/auth';
 import { auth, db } from '../lib/firebase';
 import { doc, getDoc, setDoc, serverTimestamp, query, collection, onSnapshot } from 'firebase/firestore';
 
@@ -98,6 +98,7 @@ function buildValidUsername(email?: string | null, uid?: string): string {
 interface AuthContextType {
   user: User | null;
   profile: any | null;
+  isFirebaseAuthenticated: boolean;
   following: string[];
   followers: string[];
   blockedUsers: string[];
@@ -110,6 +111,7 @@ interface AuthContextType {
   setTheme: (theme: 'light' | 'dark' | 'system') => void;
   t: (key: string) => string;
   signIn: () => Promise<void>;
+  signInAsGuest: () => Promise<void>;
   logOut: () => Promise<void>;
 }
 
@@ -118,6 +120,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any | null>(null);
+  const [isFirebaseAuthenticated, setIsFirebaseAuthenticated] = useState(false);
   const [following, setFollowing] = useState<string[]>([]);
   const [followers, setFollowers] = useState<string[]>([]);
   const [blockedUsers, setBlockedUsers] = useState<string[]>([]);
@@ -179,13 +182,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsubscribeAuth = onAuthStateChanged(
       auth,
       (firebaseUser) => {
-        setUser(firebaseUser);
         if (unsubscribeProfile) unsubscribeProfile();
         if (unsubscribeFollowing) unsubscribeFollowing();
         if (unsubscribeFollowers) unsubscribeFollowers();
         if (unsubscribeBlocked) unsubscribeBlocked();
 
         if (firebaseUser) {
+          try {
+            window.localStorage.removeItem('instavibe_guest_session');
+          } catch {
+            // ignore storage errors
+          }
+          setUser(firebaseUser);
+          setIsFirebaseAuthenticated(true);
           setAuthError(null);
           const fallbackProfile = {
             uid: firebaseUser.uid,
@@ -198,6 +207,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setProfile((prev: any) => (prev?.uid === firebaseUser.uid ? prev : fallbackProfile));
 
           const userRef = doc(db, 'users', firebaseUser.uid);
+          let bootstrapped = false;
 
           // Attach real-time listeners immediately so UI never blocks behind a slow network call
           unsubscribeProfile = onSnapshot(
@@ -205,24 +215,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             (snap) => {
               if (snap.exists()) {
                 setProfile(snap.data());
+              } else if (!bootstrapped) {
+                bootstrapped = true;
+                setDoc(
+                  userRef,
+                  {
+                    ...fallbackProfile,
+                    createdAt: serverTimestamp(),
+                  },
+                  { merge: true }
+                ).catch((err) => {
+                  console.warn('Auth profile bootstrap notice:', err);
+                });
               }
             },
             (err) => console.warn('Profile listener notice:', err)
           );
-
-          getDoc(userRef)
-            .then(async (userDoc) => {
-              if (!userDoc.exists()) {
-                const newProfile = {
-                  ...fallbackProfile,
-                  createdAt: serverTimestamp(),
-                };
-                await setDoc(userRef, newProfile);
-              }
-            })
-            .catch((err) => {
-              console.warn('Auth profile bootstrap notice:', err);
-            });
 
           const qFollowing = query(collection(db, 'users', firebaseUser.uid, 'following'));
           unsubscribeFollowing = onSnapshot(
@@ -251,6 +259,40 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             (err) => console.warn('Blocked users listener notice:', err)
           );
         } else {
+          setIsFirebaseAuthenticated(false);
+          const guestDataStr = safeGetStorage('instavibe_guest_session');
+          if (guestDataStr) {
+            try {
+              const guestData = JSON.parse(guestDataStr);
+              if (guestData && guestData.uid) {
+                const guestUser = {
+                  uid: guestData.uid,
+                  email: guestData.email,
+                  displayName: guestData.displayName,
+                  photoURL: guestData.photoURL,
+                  emailVerified: true,
+                  isAnonymous: true,
+                } as unknown as User;
+                setUser(guestUser);
+                setProfile({
+                  uid: guestData.uid,
+                  username: 'guest_' + guestData.uid.slice(-6),
+                  fullName: guestData.displayName,
+                  email: guestData.email,
+                  photoURL: guestData.photoURL,
+                  bio: language === 'ar' ? 'حساب تجريبي / زائر' : 'Guest / Trial Account',
+                });
+                setFollowing([]);
+                setFollowers([]);
+                setBlockedUsers([]);
+                setLoading(false);
+                return;
+              }
+            } catch {
+              // ignore invalid guest session JSON
+            }
+          }
+          setUser(null);
           setProfile(null);
           setFollowing([]);
           setFollowers([]);
@@ -278,6 +320,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
+      try {
+        window.localStorage.removeItem('instavibe_guest_session');
+      } catch {
+        // ignore storage errors
+      }
     } catch (error: any) {
       const code = error?.code || '';
       if (code === 'auth/popup-blocked') {
@@ -302,12 +349,63 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const signInAsGuest = async () => {
+    setAuthError(null);
+    try {
+      await signInAnonymously(auth);
+    } catch (error: any) {
+      console.warn('Anonymous auth fallback notice:', error);
+      const guestId = 'guest_' + Math.random().toString(36).slice(2, 10);
+      const guestUser = {
+        uid: guestId,
+        email: 'guest@instavibe.local',
+        displayName: language === 'ar' ? 'زائر انستافايب' : 'InstaVibe Guest',
+        photoURL: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+        emailVerified: true,
+        isAnonymous: true,
+        providerData: [],
+        metadata: {},
+        refreshToken: '',
+        tenantId: null,
+        delete: async () => {},
+        getIdToken: async () => 'mock-token',
+        getIdTokenResult: async () => ({ token: 'mock-token', authTime: '', issuedAtTime: '', expirationTime: '', signInProvider: null, signInSecondFactor: null, claims: {} }),
+        reload: async () => {},
+        toJSON: () => ({}),
+      } as unknown as User;
+
+      safeSetStorage('instavibe_guest_session', JSON.stringify({
+        uid: guestUser.uid,
+        email: guestUser.email,
+        displayName: guestUser.displayName,
+        photoURL: guestUser.photoURL
+      }));
+      setIsFirebaseAuthenticated(false);
+      setUser(guestUser);
+      setProfile({
+        uid: guestUser.uid,
+        username: 'guest_' + guestId.slice(-6),
+        fullName: guestUser.displayName,
+        email: guestUser.email,
+        photoURL: guestUser.photoURL,
+        bio: language === 'ar' ? 'حساب تجريبي / زائر' : 'Guest / Trial Account',
+      });
+      setLoading(false);
+    }
+  };
+
   const logOut = async () => {
-    await signOut(auth);
+    localStorage.removeItem('instavibe_guest_session');
+    try {
+      await signOut(auth);
+    } catch (e) {}
+    setIsFirebaseAuthenticated(false);
+    setUser(null);
+    setProfile(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, following, followers, blockedUsers, loading, authError, clearAuthError, language, setLanguage, theme, setTheme, t, signIn, logOut }}>
+    <AuthContext.Provider value={{ user, profile, isFirebaseAuthenticated, following, followers, blockedUsers, loading, authError, clearAuthError, language, setLanguage, theme, setTheme, t, signIn, signInAsGuest, logOut }}>
       {children}
     </AuthContext.Provider>
   );

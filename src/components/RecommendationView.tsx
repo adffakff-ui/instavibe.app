@@ -19,7 +19,7 @@ export default function RecommendationView({
   onSelectTag?: (tag: string) => void;
   setView?: (view: any) => void;
 }) {
-  const { user, profile, blockedUsers, language } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, blockedUsers, language } = useAuth();
   const [recommendedPosts, setRecommendedPosts] = useState<any[]>([]);
   const [liveStreams, setLiveStreams] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,7 +27,10 @@ export default function RecommendationView({
 
   // Real-time subscription to currently active live streams
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isFirebaseAuthenticated) {
+      setLiveStreams([]);
+      return;
+    }
     const liveQ = query(
       collection(db, 'liveStreams'),
       where('status', '==', 'live'),
@@ -44,10 +47,14 @@ export default function RecommendationView({
       (err) => console.warn('Discovery live streams notice:', err)
     );
     return unsubscribe;
-  }, [user, blockedUsers]);
+  }, [user, isFirebaseAuthenticated, blockedUsers]);
 
   useEffect(() => {
-    if (!profile) return;
+    if (!profile || !isFirebaseAuthenticated) {
+      setRecommendedPosts([]);
+      setLoading(false);
+      return;
+    }
 
     const fetchRecommendations = async () => {
       setLoading(true);
@@ -86,14 +93,14 @@ export default function RecommendationView({
 
         setRecommendedPosts(postsData.filter((p: any) => !blockedUsers.includes(p.authorId)));
       } catch (error) {
-        console.error('Recommendation fetch error:', error);
+        console.warn('Recommendation fetch notice:', error);
       } finally {
         setLoading(false);
       }
     };
 
     fetchRecommendations();
-  }, [profile, blockedUsers]);
+  }, [profile, isFirebaseAuthenticated, blockedUsers]);
 
   if (loading && recommendedPosts.length === 0) {
     return <DiscoverySkeleton />;

@@ -55,7 +55,7 @@ function ReelCard({
   onOpenChat,
   onOpenComments,
 }: ReelCardProps) {
-  const { user, profile, language, t } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, language, t } = useAuth();
   const {
     reactToPost,
     unlikePost,
@@ -92,7 +92,7 @@ function ReelCard({
   }, []);
 
   useEffect(() => {
-    if (!user || !reel?.id) {
+    if (!user || !isFirebaseAuthenticated || !reel?.id) {
       setIsSaved(false);
       return;
     }
@@ -103,7 +103,7 @@ function ReelCard({
       (err) => console.warn('Reel saved listener notice:', err)
     );
     return unsub;
-  }, [user, reel?.id]);
+  }, [user, isFirebaseAuthenticated, reel?.id]);
 
   useEffect(() => {
     if (typeof reel.likesCount === 'number') {
@@ -115,7 +115,7 @@ function ReelCard({
   }, [reel.likesCount, reel.reactionCounts]);
 
   useEffect(() => {
-    if (!user || !reel?.id) return;
+    if (!user || !isFirebaseAuthenticated || !reel?.id) return;
     const likeRef = doc(db, 'posts', reel.id, 'likes', user.uid);
     const unsub = onSnapshot(
       likeRef,
@@ -129,7 +129,7 @@ function ReelCard({
       (err) => console.warn('Reel like listener notice:', err)
     );
     return unsub;
-  }, [user, reel?.id]);
+  }, [user, isFirebaseAuthenticated, reel?.id]);
 
   useEffect(() => {
     if (videoRef.current) {
@@ -493,7 +493,7 @@ export default function ReelsView({
   onOpenProfile: (uid: string) => void;
   onOpenChat: (convId: string) => void;
 }) {
-  const { user, profile, blockedUsers, language, t } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, blockedUsers, language, t } = useAuth();
   const { addComment } = useFirestore();
 
   const [reels, setReels] = useState<any[]>([]);
@@ -510,6 +510,12 @@ export default function ReelsView({
   const feedContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    if (!isFirebaseAuthenticated) {
+      setReels([]);
+      setLoading(false);
+      return;
+    }
+
     const q = query(collection(db, 'posts'), where('mediaType', '==', 'video'));
     const unsubscribe = onSnapshot(
       q,
@@ -530,10 +536,10 @@ export default function ReelsView({
     );
 
     return unsubscribe;
-  }, [blockedUsers]);
+  }, [blockedUsers, isFirebaseAuthenticated]);
 
   useEffect(() => {
-    if (!activeCommentsReel?.id) {
+    if (!activeCommentsReel?.id || !isFirebaseAuthenticated) {
       setReelComments([]);
       return;
     }

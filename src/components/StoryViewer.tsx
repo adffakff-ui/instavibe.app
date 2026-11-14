@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
@@ -72,7 +72,7 @@ export default function StoryViewer({
   onStoryDeleted,
   onStoryArchived,
 }: StoryViewerProps) {
-  const { user, profile, language } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, language } = useAuth();
   const { deleteStory, archiveStory, voteStoryPoll, reactToStory, removeStoryReaction, getOrCreateConversation, sendMessage } = useFirestore();
 
   const [activeStories, setActiveStories] = useState<StoryItem[]>(initialStories);
@@ -157,12 +157,15 @@ export default function StoryViewer({
   // Real-time story reactions listener
   useEffect(() => {
     setShowReactionsList(false);
-    if (!currentStory?.id || !user) {
+    if (!currentStory?.id || !user || !isFirebaseAuthenticated) {
       setStoryReactions([]);
       return;
     }
 
-    const reactionsRef = collection(db, 'stories', currentStory.id, 'reactions');
+    const reactionsRef = query(
+      collection(db, 'stories', currentStory.id, 'reactions'),
+      where('storyId', '==', currentStory.id)
+    );
     const unsub = onSnapshot(
       reactionsRef,
       (snap) => {
@@ -181,7 +184,7 @@ export default function StoryViewer({
     );
 
     return unsub;
-  }, [currentStory?.id, user]);
+  }, [currentStory?.id, user, isFirebaseAuthenticated]);
 
   // Progress Bar Timer for Images / Fallback
   useEffect(() => {

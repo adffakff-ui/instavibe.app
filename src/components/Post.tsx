@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { MessageCircle, Send, Bookmark, MoreHorizontal, ChevronDown, ChevronUp, Volume2, VolumeX, Play, Trash2, Share2, Ban, User as UserIcon, Check } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
-import { collection, query, orderBy, onSnapshot, doc, getDoc, limit } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, doc, getDoc, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
@@ -41,7 +41,7 @@ export default function Post({
   onSelectTag?: (tag: string) => void;
   onPostDeleted?: (postId: string) => void;
 }) {
-  const { user, profile, followers, following, blockedUsers, language, t } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, followers, following, blockedUsers, language, t } = useAuth();
   const {
     reactToPost,
     unlikePost,
@@ -109,7 +109,7 @@ export default function Post({
 
   // Real-time post like/reaction listener for current user
   useEffect(() => {
-    if (!user || !post?.id) return;
+    if (!user || !isFirebaseAuthenticated || !post?.id) return;
     const likeRef = doc(db, 'posts', post.id, 'likes', user.uid);
     const unsubscribe = onSnapshot(
       likeRef,
@@ -123,11 +123,11 @@ export default function Post({
       (err) => console.warn('Post like listener notice:', err)
     );
     return unsubscribe;
-  }, [post?.id, user]);
+  }, [post?.id, user, isFirebaseAuthenticated]);
 
   // Real-time bookmark state listener
   useEffect(() => {
-    if (!user || !post?.id) return;
+    if (!user || !isFirebaseAuthenticated || !post?.id) return;
     const savedRef = doc(db, 'users', user.uid, 'savedPosts', post.id);
     const unsubscribe = onSnapshot(
       savedRef,
@@ -135,7 +135,7 @@ export default function Post({
       (err) => console.warn('Saved post listener notice:', err)
     );
     return unsubscribe;
-  }, [post?.id, user]);
+  }, [post?.id, user, isFirebaseAuthenticated]);
 
   // Close options dropdown when clicking outside
   useEffect(() => {
@@ -151,14 +151,17 @@ export default function Post({
 
   // Real-time recent likes list listener
   useEffect(() => {
-    if (!post?.id || !user) return;
+    if (!post?.id || !user || !isFirebaseAuthenticated) {
+      setRecentLikes([]);
+      setLoadingRecentLikes(false);
+      return;
+    }
     let isCancelled = false;
     setLoadingRecentLikes(true);
 
     const likesQuery = query(
       collection(db, 'posts', post.id, 'likes'),
-      orderBy('createdAt', 'desc'),
-      limit(25)
+      where('postId', '==', post.id)
     );
 
     const unsubscribe = onSnapshot(
@@ -166,7 +169,9 @@ export default function Post({
       async (snapshot) => {
         const rawDocs = snapshot.docs
           .map((d) => ({ id: d.id, ...(d.data() as any) }))
-          .filter((item) => !blockedUsers.includes(item.userId || item.id));
+          .filter((item) => !blockedUsers.includes(item.userId || item.id))
+          .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0))
+          .slice(0, 25);
 
         const resolved = await Promise.all(
           rawDocs.map(async (item): Promise<PostLiker> => {
@@ -258,11 +263,15 @@ export default function Post({
       isCancelled = true;
       unsubscribe();
     };
-  }, [post?.id, user, profile, blockedUsers]);
+  }, [post?.id, user, isFirebaseAuthenticated, profile, blockedUsers]);
 
   // Real-time comments listener for this post
   useEffect(() => {
-    if (!post?.id) return;
+    if (!post?.id || !isFirebaseAuthenticated) {
+      setComments([]);
+      setLoadingComments(false);
+      return;
+    }
 
     setLoadingComments(true);
     const q = query(

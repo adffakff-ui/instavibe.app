@@ -12,13 +12,13 @@ import ReelsView from './components/ReelsView';
 import LiveView from './components/LiveView';
 import { OfflineIndicator, PWAInstallModal } from './components/PWAInstallModal';
 import { usePWAInstall } from './hooks/usePWAInstall';
-import { LogIn, Download, Smartphone, AlertCircle } from 'lucide-react';
+import { LogIn, Download, Smartphone, AlertCircle, Compass } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useBlockedConversationListener } from './hooks/useBlockedConversationListener';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 
 function AppContent() {
-  const { user, loading, authError, signIn, language, setLanguage, blockedUsers } = useAuth();
+  const { user, loading, authError, signIn, signInAsGuest, language, setLanguage, blockedUsers } = useAuth();
   const { isInstalled, isInstallable, install } = usePWAInstall();
   const [view, setView] = useState<'feed' | 'messages' | 'explore' | 'profile' | 'notifications' | 'discover' | 'analytics' | 'reels' | 'live'>('feed');
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
@@ -96,6 +96,15 @@ function AppContent() {
             >
               <LogIn size={20} />
               {language === 'ar' ? 'تسجيل الدخول عبر Google' : 'Sign in with Google'}
+            </button>
+
+            <button
+              type="button"
+              onClick={signInAsGuest}
+              className="w-full flex items-center justify-center gap-2 bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-900/60 py-3 px-4 rounded-xl font-medium hover:bg-purple-100 dark:hover:bg-purple-900/60 transition-all active:scale-[0.98]"
+            >
+              <Compass size={20} className="text-purple-600 dark:text-purple-400" />
+              {language === 'ar' ? 'الدخول كضيف (تجربة فورية)' : 'Guest Mode (Instant Trial)'}
             </button>
 
             {!isInstalled && (

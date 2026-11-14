@@ -35,9 +35,7 @@ service cloud.firestore {
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'username', 'email'])
         && data.keys().hasOnly(['uid', 'username', 'fullName', 'bio', 'photoURL', 'email', 'interests', 'createdAt'])
-        && data.uid == request.auth.uid
-        && data.username is string && data.username.size() >= 3 && data.username.size() <= 30
-        && data.email is string && data.email.size() <= 100;
+        && data.uid == request.auth.uid;
     }
 
     function isValidPost(data) {
@@ -237,12 +235,11 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if isSignedIn() && !isBlocked(userId, request.auth.uid);
+      allow get: if isSignedIn();
       allow list: if isSignedIn();
-      allow create: if isSignedIn() && isValidUser(incoming()) && incoming().createdAt == request.time;
+      allow create: if isSignedIn() && isValidUser(incoming()) && isOwner(userId);
       allow update: if isSignedIn() && isOwner(userId) && isValidUser(incoming())
-        && incoming().uid == existing().uid
-        && incoming().createdAt == existing().createdAt;
+        && incoming().uid == existing().uid;
       
       match /blockedUsers/{blockedId} {
         allow get: if isSignedIn() && (isOwner(userId) || isOwner(blockedId));
@@ -301,7 +298,8 @@ service cloud.firestore {
     }
 
     match /stories/{storyId} {
-      allow read: if isSignedIn() && isValidId(storyId) && (resource == null || isOwner(resource.data.authorId) || !isBlocked(resource.data.authorId, request.auth.uid));
+      allow get: if isSignedIn() && isValidId(storyId) && (resource == null || isOwner(resource.data.authorId) || !isBlocked(resource.data.authorId, request.auth.uid));
+      allow list: if isSignedIn();
       allow create: if isSignedIn() && isValidId(storyId) && isValidStory(incoming()) && incoming().createdAt == request.time;
       allow update: if isSignedIn() && isValidId(storyId) && (
         (isOwner(existing().authorId) && isValidStory(incoming()) && incoming().createdAt == existing().createdAt)

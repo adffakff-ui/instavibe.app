@@ -10,7 +10,7 @@ import ActionConfirmationModal from './ActionConfirmationModal';
 import UserAvatar from './UserAvatar';
 
 export default function ChatView({ conversationId, onBack }: { conversationId: string, onBack: () => void }) {
-  const { user, profile, blockedUsers, language } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, blockedUsers, language } = useAuth();
   const { sendMessage, blockUser } = useFirestore();
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState('');
@@ -30,7 +30,10 @@ export default function ChatView({ conversationId, onBack }: { conversationId: s
   }, [otherUser, blockedUsers, onBack]);
 
   useEffect(() => {
-    if (!conversationId || !user) return;
+    if (!conversationId || !user || !isFirebaseAuthenticated) {
+      setLoading(false);
+      return;
+    }
 
     const q = query(
       collection(db, 'conversations', conversationId, 'messages'),

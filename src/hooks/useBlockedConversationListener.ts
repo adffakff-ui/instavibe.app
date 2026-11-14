@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { doc, onSnapshot, getDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 
 export interface UseBlockedConversationListenerOptions {
   selectedConversationId: string | null;
@@ -37,7 +37,7 @@ export function useBlockedConversationListener({
 
   // 2. Real-time Firestore snapshot listener on active conversation document
   useEffect(() => {
-    if (!selectedConversationId) return;
+    if (!selectedConversationId || !auth.currentUser) return;
 
     const convRef = doc(db, 'conversations', selectedConversationId);
     const unsubscribe = onSnapshot(
@@ -83,6 +83,8 @@ export function useBlockedConversationListener({
         setSelectedConversationId(null);
         return;
       }
+
+      if (!auth.currentUser) return;
 
       // Check against Firestore document asynchronously if non-canonical ID
       getDoc(doc(db, 'conversations', selectedConversationId))

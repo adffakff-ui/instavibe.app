@@ -20,13 +20,13 @@ export default function SuggestedUsersCard({
   onOpenProfile,
   title,
 }: SuggestedUsersCardProps) {
-  const { user, following, followers, blockedUsers, language } = useAuth();
+  const { user, isFirebaseAuthenticated, following, followers, blockedUsers, language } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
-    if (!user) {
+    if (!user || !isFirebaseAuthenticated) {
       setUsers([]);
       setLoading(false);
       return;
@@ -54,7 +54,7 @@ export default function SuggestedUsersCard({
     return () => {
       cancelled = true;
     };
-  }, [user, refreshTick]);
+  }, [user, isFirebaseAuthenticated, refreshTick]);
 
   const suggestions = useMemo(() => {
     if (!user) return [];

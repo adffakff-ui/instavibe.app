@@ -185,7 +185,7 @@ export default function LiveView({
   onOpenProfile: (uid: string) => void;
   onOpenChat: (convId: string) => void;
 }) {
-  const { user, profile, blockedUsers, language, t } = useAuth();
+  const { user, profile, isFirebaseAuthenticated, blockedUsers, language, t } = useAuth();
   const { blockUser, getOrCreateConversation } = useFirestore();
   const isAr = language === 'ar';
 
@@ -525,7 +525,12 @@ export default function LiveView({
   // 1. Hub Listener: Active & Recent Live Streams
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (!user) return;
+    if (!user || !isFirebaseAuthenticated) {
+      setActiveStreams([]);
+      setRecentStreams([]);
+      setLoadingHub(false);
+      return;
+    }
     const qActive = query(collection(db, 'liveStreams'), where('status', '==', 'live'));
     const unsubActive = onSnapshot(
       qActive,
@@ -561,7 +566,7 @@ export default function LiveView({
       unsubActive();
       unsubRecent();
     };
-  }, [user, blockedUsers]);
+  }, [user, isFirebaseAuthenticated, blockedUsers]);
 
   // Streams where current user is currently invited as guest (shown in Hub!)
   const myPendingInvites = useMemo(
@@ -571,7 +576,7 @@ export default function LiveView({
 
   // Load users for Host's Invite Guest Modal
   useEffect(() => {
-    if (!showInviteModal || !user) return;
+    if (!showInviteModal || !user || !isFirebaseAuthenticated) return;
     let cancelled = false;
     const fetchUsers = async () => {
       setLoadingUsers(true);
