@@ -376,7 +376,10 @@ export async function checkUsernameAvailability(
     }
     return { available: false, reason: 'taken', normalizedKey };
   } catch (error: any) {
-    if (error?.message?.includes('client is offline')) {
+    const isOfflineErr =
+      error?.code === 'unavailable' ||
+      (typeof error?.message === 'string' && error.message.toLowerCase().includes('offline'));
+    if (isOfflineErr) {
       try {
         await enableNetwork(db).catch(() => {});
         const retrySnap = await getDoc(doc(db, 'usernames', normalizedKey));

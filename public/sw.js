@@ -1,4 +1,4 @@
-const CACHE_NAME = 'instavibe-cache-v5';
+const CACHE_NAME = 'instavibe-cache-v6';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -44,8 +44,8 @@ self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
 
-  // Skip chrome-extension or non-http requests
-  if (!url.protocol.startsWith('http')) return;
+  // Skip chrome-extension, non-http, or any cross-origin requests (e.g. Firebase/Firestore APIs)
+  if (!url.protocol.startsWith('http') || url.origin !== self.location.origin) return;
 
   // Never intercept or cache Vite dev modules, scripts, pre-bundled deps, or non-GET requests
   if (

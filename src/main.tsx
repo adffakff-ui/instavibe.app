@@ -36,6 +36,15 @@ function setupServiceWorker() {
         onRegisteredSW(_swUrl, registration) {
           if (!registration) return;
           (window as any).__instavibeSwRegistration = registration;
+          // Clean up any legacy /sw.js worker so only pwa-sw.js controls offline caching
+          navigator.serviceWorker.getRegistrations().then((regs) => {
+            regs.forEach((reg) => {
+              const scriptUrl = reg.active?.scriptURL || reg.installing?.scriptURL || reg.waiting?.scriptURL || '';
+              if (scriptUrl.endsWith('/sw.js') && reg !== registration) {
+                reg.unregister().catch(() => {});
+              }
+            });
+          }).catch(() => {});
           // Check for new versions periodically and when returning to the app
           window.setInterval(() => {
             registration.update().catch(() => {});

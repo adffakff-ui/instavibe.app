@@ -16,7 +16,7 @@ function createFirestoreInstance() {
     return initializeFirestore(
       app,
       {
-        experimentalAutoDetectLongPolling: true,
+        experimentalForceLongPolling: true,
         ignoreUndefinedProperties: true,
       },
       firebaseConfig.firestoreDatabaseId
@@ -51,8 +51,10 @@ if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     enableNetwork(db).catch(() => {});
   });
-  window.addEventListener('focus', () => {
-    enableNetwork(db).catch(() => {});
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && navigator.onLine !== false) {
+      enableNetwork(db).catch(() => {});
+    }
   });
 }
 
