@@ -2,6 +2,7 @@
   "id": "/",
   "name": "InstaVibe",
   "short_name": "InstaVibe",
+  "version": "2.1.0",
   "description": "منصة اجتماعية حديثة لمشاركة الصور، القصص، الريلز، والبث المباشر.",
   "start_url": "/",
   "scope": "/",

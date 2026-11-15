@@ -2,10 +2,11 @@ import { useState, useEffect } from 'react';
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import { Heart, UserPlus, MessageSquare, Loader2, CheckCheck } from 'lucide-react';
+import { Heart, UserPlus, MessageSquare, Loader2, CheckCheck, Sparkles } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { REACTION_MAP, isValidReactionType } from '../utils/reactions';
+import { isStoryReplyNotification } from './NotificationToast';
 import UserAvatar from './UserAvatar';
 import FollowButton from './FollowButton';
 
@@ -178,7 +179,15 @@ export default function NotificationsView({
                   })()}
                   {notif.type === 'follow' && (language === 'ar' ? 'بدأ بمتابعتك.' : 'started following you.')}
                   {notif.type === 'comment' && (language === 'ar' ? `علّق: ${notif.text}` : `commented: ${notif.text}`)}
-                  {notif.type === 'message' && (language === 'ar' ? `أرسل لك رسالة: ${notif.text}` : `sent you a message: ${notif.text}`)}
+                  {notif.type === 'message' && (() => {
+                    const storyReply = isStoryReplyNotification(notif);
+                    if (storyReply.isStoryReply) {
+                      return language === 'ar'
+                        ? `رد على قصتك: "${storyReply.replyBody}"`
+                        : `replied to your story: "${storyReply.replyBody}"`;
+                    }
+                    return language === 'ar' ? `أرسل لك رسالة: ${notif.text}` : `sent you a message: ${notif.text}`;
+                  })()}
                 </p>
                 <p className="text-[10px] text-slate-400 mt-1">
                   {notif.createdAt?.toDate
@@ -206,7 +215,13 @@ export default function NotificationsView({
                   return <Heart size={16} className="text-red-500 fill-red-500" />;
                 })()}
                 {notif.type === 'follow' && <UserPlus size={16} className="text-blue-500" />}
-                {notif.type === 'message' && <MessageSquare size={16} className="text-emerald-500" />}
+                {notif.type === 'message' && (
+                  isStoryReplyNotification(notif).isStoryReply ? (
+                    <Sparkles size={16} className="text-purple-500" />
+                  ) : (
+                    <MessageSquare size={16} className="text-emerald-500" />
+                  )
+                )}
                 {notif.type === 'comment' && <MessageSquare size={16} className="text-slate-400" />}
               </div>
 

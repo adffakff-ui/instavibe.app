@@ -29,6 +29,24 @@
   </head>
   <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 antialiased">
     <div id="root"></div>
+    <script>
+      (function () {
+        window.__instavibeDeferredPrompt = null;
+        window.__instavibeInstalled =
+          window.matchMedia('(display-mode: standalone)').matches ||
+          window.navigator.standalone === true;
+        window.addEventListener('beforeinstallprompt', function (e) {
+          e.preventDefault();
+          window.__instavibeDeferredPrompt = e;
+          window.dispatchEvent(new CustomEvent('instavibe:install-available'));
+        });
+        window.addEventListener('appinstalled', function () {
+          window.__instavibeInstalled = true;
+          window.__instavibeDeferredPrompt = null;
+          window.dispatchEvent(new CustomEvent('instavibe:app-installed'));
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -447,6 +447,27 @@ export async function revokeLoginSession(userId: string, sessionId: string): Pro
   }
 }
 
+export function sanitizeWebsiteUrl(rawUrl?: string | null): string {
+  const trimmed = (rawUrl || '').trim().slice(0, 200);
+  if (!trimmed) return '';
+  if (/^(javascript|data|vbscript|file):/i.test(trimmed)) {
+    return '';
+  }
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const parsed = new URL(withProtocol);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      return '';
+    }
+    if (!parsed.hostname || !parsed.hostname.includes('.')) {
+      return '';
+    }
+    return parsed.toString().slice(0, 200);
+  } catch {
+    return '';
+  }
+}
+
 export async function claimUsernameAndSaveProfile(params: {
   uid: string;
   email: string;
@@ -454,7 +475,9 @@ export async function claimUsernameAndSaveProfile(params: {
   username: string;
   fullName: string;
   bio: string;
+  website?: string;
   photoURL: string;
+  coverPhotoURL?: string;
   previousUsername?: string;
   authProvider?: AuthProviderType;
   emailVerified?: boolean;
@@ -498,13 +521,29 @@ export async function claimUsernameAndSaveProfile(params: {
         });
       }
 
+      const existingData = userSnap.exists() ? userSnap.data() : {};
+      const resolvedWebsite =
+        params.website !== undefined
+          ? sanitizeWebsiteUrl(params.website)
+          : typeof existingData?.website === 'string'
+          ? existingData.website.slice(0, 200)
+          : '';
+      const resolvedCoverPhotoURL =
+        params.coverPhotoURL !== undefined
+          ? params.coverPhotoURL.trim().slice(0, 900000)
+          : typeof existingData?.coverPhotoURL === 'string'
+          ? existingData.coverPhotoURL.slice(0, 900000)
+          : '';
+
       const payload: Record<string, any> = {
         uid: params.uid,
         username: cleanUsername,
         usernameLower: newKey,
         fullName: params.fullName.trim().slice(0, 80),
         bio: params.bio.trim().slice(0, 220),
+        website: resolvedWebsite,
         photoURL: params.photoURL.trim().slice(0, 900000),
+        coverPhotoURL: resolvedCoverPhotoURL,
         email: params.email.slice(0, 320),
         phoneNumber: (params.phoneNumber || '').slice(0, 32),
         emailVerified: Boolean(params.emailVerified),

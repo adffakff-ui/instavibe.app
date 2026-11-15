@@ -821,7 +821,14 @@ export function useFirestore() {
 
   const updateUserProfile = async (
     userId: string,
-    updates: { username: string; fullName: string; bio: string; photoURL: string }
+    updates: {
+      username: string;
+      fullName: string;
+      bio: string;
+      website?: string;
+      photoURL: string;
+      coverPhotoURL?: string;
+    }
   ) => {
     setLoading(true);
     try {
@@ -841,7 +848,9 @@ export function useFirestore() {
         username: updates.username,
         fullName: updates.fullName,
         bio: updates.bio,
+        website: updates.website,
         photoURL: updates.photoURL,
+        coverPhotoURL: updates.coverPhotoURL,
         previousUsername,
         authProvider,
         emailVerified,
@@ -851,6 +860,20 @@ export function useFirestore() {
         throw error;
       }
       handleFirestoreError(error, OperationType.WRITE, `users/${userId}`, true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateCoverPhoto = async (userId: string, coverPhotoURL: string) => {
+    if (!userId) return;
+    setLoading(true);
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        coverPhotoURL: coverPhotoURL.trim().slice(0, 900000),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${userId}`, true);
     } finally {
       setLoading(false);
     }
@@ -903,6 +926,6 @@ export function useFirestore() {
     followUser, unfollowUser, removeFollower, getOrCreateConversation, sendMessage, blockUser, 
     unblockUser, createStory, voteStoryPoll, reactToStory, removeStoryReaction, recordStoryView,
     deleteStory, archiveStory, createHighlightAlbum, updateHighlightAlbum,
-    deleteHighlightAlbum, addStoryToHighlightAlbum, updateUserProfile, loading 
+    deleteHighlightAlbum, addStoryToHighlightAlbum, updateUserProfile, updateCoverPhoto, loading 
   };
 }

@@ -1146,27 +1146,32 @@ export default function AuthPortal({
           </>
         )}
 
-        {/* Mobile App Install */}
-        {!isInstalled && (
-          <div className="pt-1 space-y-2 border-t border-slate-100 dark:border-slate-800">
+        {/* Mobile App Install (Outside App) */}
+        <div className="pt-2 space-y-2 border-t border-slate-100 dark:border-slate-800">
+          {!isInstalled ? (
             <button
               type="button"
               onClick={onInstallTrigger}
-              className="w-full min-h-[42px] flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white py-2.5 px-4 rounded-xl text-xs font-bold transition-all active:scale-[0.98]"
+              className="w-full min-h-[44px] flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white py-2.5 px-4 rounded-xl text-xs font-bold transition-all active:scale-[0.98] shadow-sm"
             >
               <Download size={15} />
-              <span>{isAr ? 'تثبيت التطبيق على الجوال / APK' : 'Install Mobile App / APK'}</span>
+              <span>{isAr ? 'تثبيت التطبيق على جهازك (v2.1.0)' : 'Install App on Device (v2.1.0)'}</span>
             </button>
-            <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-              <Smartphone size={13} className="text-purple-500 shrink-0" />
-              <span>
-                {isAr
-                  ? 'يعمل على أندرويد وآيفون كحزمة تطبيق مستقلة'
-                  : 'Installable on Android & iPhone as a standalone app'}
-              </span>
+          ) : (
+            <div className="w-full py-2 px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-emerald-700 dark:text-emerald-300 text-xs font-bold flex items-center justify-center gap-1.5">
+              <CheckCircle2 size={14} />
+              <span>{isAr ? 'التطبيق مثبّت • الإصدار v2.1.0' : 'App Installed • v2.1.0'}</span>
             </div>
+          )}
+          <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+            <Smartphone size={13} className="text-purple-500 shrink-0" />
+            <span>
+              {isAr
+                ? 'يعمل على أندرويد وآيفون وسطح المكتب كتطبيق مستقل • الإصدار 2.1.0'
+                : 'Standalone app for Android, iPhone & Desktop • Version 2.1.0'}
+            </span>
           </div>
-        )}
+        </div>
       </div>
 
       <OfflineIndicator />

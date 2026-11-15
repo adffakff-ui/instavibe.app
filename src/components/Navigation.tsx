@@ -177,12 +177,17 @@ export default function Navigation({
             <button
               type="button"
               onClick={onOpenInstall}
-              className="flex items-center gap-4 p-3.5 rounded-xl bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 transition-colors group mt-auto font-bold whitespace-nowrap border border-purple-200/70 dark:border-purple-800/60"
+              className="flex items-center gap-3.5 p-3.5 rounded-xl bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 transition-colors group mt-auto font-bold whitespace-nowrap border border-purple-200/70 dark:border-purple-800/60"
             >
               <Smartphone size={22} className="shrink-0 text-purple-600 dark:text-purple-400" />
-              <span className="hidden lg:block text-sm">
-                {language === 'ar' ? 'تثبيت التطبيق / APK' : 'Install App / APK'}
-              </span>
+              <div className="hidden lg:flex items-center justify-between gap-2 flex-1 min-w-0">
+                <span className="text-sm truncate">
+                  {language === 'ar' ? 'تثبيت التطبيق' : 'Install App'}
+                </span>
+                <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-purple-600/15 text-purple-700 dark:text-purple-300 tabular-nums">
+                  v2.1.0
+                </span>
+              </div>
             </button>
           )}
 

@@ -1,0 +1,3 @@
+export const APP_VERSION = '2.1.0';
+export const APP_BUILD_DATE = '2026-11-15';
+export const APP_VERSION_LABEL = `v${APP_VERSION}`;

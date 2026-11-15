@@ -34,7 +34,7 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'username', 'email'])
-        && data.keys().hasOnly(['uid', 'username', 'usernameLower', 'fullName', 'bio', 'photoURL', 'email', 'phoneNumber', 'emailVerified', 'authProvider', 'onboardingCompleted', 'lastLoginAt', 'interests', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'username', 'usernameLower', 'fullName', 'bio', 'website', 'photoURL', 'coverPhotoURL', 'email', 'phoneNumber', 'emailVerified', 'authProvider', 'onboardingCompleted', 'lastLoginAt', 'interests', 'createdAt'])
         && data.uid == request.auth.uid
         && data.username is string && data.username.size() >= 3 && data.username.size() <= 30
         && data.email is string && data.email.size() <= 320
@@ -42,7 +42,9 @@ service cloud.firestore {
         && (!('usernameLower' in data) || data.usernameLower == null || (data.usernameLower is string && data.usernameLower.size() >= 3 && data.usernameLower.size() <= 30))
         && (!('fullName' in data) || data.fullName == null || (data.fullName is string && data.fullName.size() <= 80))
         && (!('bio' in data) || data.bio == null || (data.bio is string && data.bio.size() <= 220))
+        && (!('website' in data) || data.website == null || (data.website is string && data.website.size() <= 200))
         && (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 900000))
+        && (!('coverPhotoURL' in data) || data.coverPhotoURL == null || (data.coverPhotoURL is string && data.coverPhotoURL.size() <= 900000))
         && (!('emailVerified' in data) || data.emailVerified is bool)
         && (!('authProvider' in data) || data.authProvider in ['google', 'password', 'phone'])
         && (!('onboardingCompleted' in data) || data.onboardingCompleted is bool);

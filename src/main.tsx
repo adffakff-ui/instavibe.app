@@ -26,13 +26,32 @@ root.render(
 function setupServiceWorker() {
   if (import.meta.env.PROD) {
     try {
-      registerSW({
+      const updateSW = registerSW({
         immediate: true,
+        onNeedRefresh() {
+          (window as any).__instavibeUpdateAvailable = true;
+          (window as any).__instavibeApplyUpdate = () => updateSW(true);
+          window.dispatchEvent(new CustomEvent('instavibe:sw-update-ready'));
+        },
+        onRegisteredSW(_swUrl, registration) {
+          if (!registration) return;
+          (window as any).__instavibeSwRegistration = registration;
+          // Check for new versions periodically and when returning to the app
+          window.setInterval(() => {
+            registration.update().catch(() => {});
+          }, 30 * 60 * 1000);
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+              registration.update().catch(() => {});
+            }
+          });
+        },
         onRegisterError(error) {
           // PWA support is optional; a registration failure must not prevent app startup.
           console.warn('Service worker registration notice:', error);
         },
       });
+      (window as any).__instavibeApplyUpdate = () => updateSW(true);
     } catch (error) {
       console.warn('PWA setup notice:', error);
     }

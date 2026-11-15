@@ -1,3 +1,5 @@
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from './lib/firebase';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
 import Feed from './components/Feed';
@@ -10,7 +12,9 @@ import RecommendationView from './components/RecommendationView';
 import AnalyticsDashboard from './components/AnalyticsDashboard';
 import ReelsView from './components/ReelsView';
 import LiveView from './components/LiveView';
-import { OfflineIndicator, PWAInstallModal } from './components/PWAInstallModal';
+import { AppUpdateBanner, OfflineIndicator, PWAInstallModal } from './components/PWAInstallModal';
+import NotificationToast from './components/NotificationToast';
+import PostDetailModal from './components/PostDetailModal';
 import AuthPortal from './components/AuthPortal';
 import OnboardingView from './components/OnboardingView';
 import { usePWAInstall } from './hooks/usePWAInstall';
@@ -20,12 +24,13 @@ import { SpeedInsights } from '@vercel/speed-insights/react';
 
 function AppContent() {
   const { user, needsOnboarding, pendingEmailVerification, loading, blockedUsers } = useAuth();
-  const { isInstalled, isInstallable, install } = usePWAInstall();
+  const { isInstalled, isInstallable, isEmbedded, install } = usePWAInstall();
   const [view, setView] = useState<'feed' | 'messages' | 'explore' | 'profile' | 'notifications' | 'discover' | 'analytics' | 'reels' | 'live'>('feed');
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [selectedHashtag, setSelectedHashtag] = useState<string>('all');
   const [showInstallModal, setShowInstallModal] = useState(false);
+  const [toastPost, setToastPost] = useState<any | null>(null);
 
   // Automatically clears any active selectedConversationId state if the blocked user is a participant
   useBlockedConversationListener({
@@ -39,14 +44,27 @@ function AppContent() {
     const handleOpenInstall = () => setShowInstallModal(true);
     window.addEventListener('instavibe:open-install', handleOpenInstall);
 
-    if (typeof window !== 'undefined' && window.location.search.includes('install=1')) {
+    if (typeof window !== 'undefined' && window.location.search.includes('install=1') && !isInstalled) {
       setShowInstallModal(true);
     }
 
     return () => {
       window.removeEventListener('instavibe:open-install', handleOpenInstall);
     };
-  }, []);
+  }, [isInstalled]);
+
+  // If opened with ?install=1 in an external browser and native install prompt becomes ready, keep modal open or let 1-tap trigger cleanly
+  useEffect(() => {
+    if (
+      typeof window !== 'undefined' &&
+      window.location.search.includes('install=1') &&
+      isInstallable &&
+      !isEmbedded &&
+      !isInstalled
+    ) {
+      setShowInstallModal(true);
+    }
+  }, [isInstallable, isEmbedded, isInstalled]);
 
   if (loading) {
     return (
@@ -101,13 +119,26 @@ function AppContent() {
     setView('explore');
   };
 
+  const handleOpenPostFromToast = async (postId: string) => {
+    try {
+      const snap = await getDoc(doc(db, 'posts', postId));
+      if (snap.exists()) {
+        setToastPost({ id: snap.id, ...snap.data() });
+      } else {
+        setView('notifications');
+      }
+    } catch {
+      setView('notifications');
+    }
+  };
+
   return (
     <>
       <Layout
         currentView={view}
         setView={handleSetView}
         onOpenProfile={handleOpenProfile}
-        onOpenInstall={() => setShowInstallModal(true)}
+        onOpenInstall={handleInstallTrigger}
       >
         {view === 'feed' ? (
           <Feed
@@ -156,7 +187,24 @@ function AppContent() {
           )
         )}
       </Layout>
+      <NotificationToast
+        onOpenProfile={handleOpenProfile}
+        onOpenNotifications={() => setView('notifications')}
+        onOpenMessages={() => {
+          setSelectedConversationId(null);
+          setView('messages');
+        }}
+        onOpenPost={handleOpenPostFromToast}
+      />
+      <PostDetailModal
+        post={toastPost}
+        onClose={() => setToastPost(null)}
+        onOpenChat={handleOpenChat}
+        onOpenProfile={handleOpenProfile}
+        onSelectTag={handleSelectTag}
+      />
       <OfflineIndicator />
+      <AppUpdateBanner />
       <PWAInstallModal isOpen={showInstallModal} onClose={() => setShowInstallModal(false)} />
     </>
   );

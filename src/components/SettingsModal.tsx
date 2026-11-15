@@ -22,13 +22,17 @@ import {
   ShieldCheck,
   KeyRound,
   RefreshCw,
+  Link2,
+  ImagePlus,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
 import { usePWAInstall } from '../hooks/usePWAInstall';
-import { evaluatePasswordStrength } from '../lib/authService';
+import { evaluatePasswordStrength, sanitizeWebsiteUrl } from '../lib/authService';
+import { compressCoverImage, compressSquareImage } from '../utils/imageCompression';
 import {
   BrowserPermissionState,
   getStoredMediaPermissions,
@@ -47,7 +51,9 @@ interface SettingsModalProps {
     username: string;
     fullName: string;
     bio: string;
+    website: string;
     photoURL: string;
+    coverPhotoURL: string;
   }) => void;
 }
 
@@ -85,13 +91,25 @@ export default function SettingsModal({
     logOut,
   } = useAuth();
   const { updateUserProfile, unblockUser, loading } = useFirestore();
-  const { isInstallable, isInstalled, install, publicAppUrl } = usePWAInstall();
+  const {
+    appVersion,
+    isInstallable,
+    isInstalled,
+    updateAvailable,
+    checkingUpdate,
+    install,
+    applyUpdate,
+    checkForUpdates,
+    publicAppUrl,
+  } = usePWAInstall();
 
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
   const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
   const [bio, setBio] = useState('');
+  const [website, setWebsite] = useState('');
   const [photoURL, setPhotoURL] = useState('');
+  const [coverPhotoURL, setCoverPhotoURL] = useState('');
 
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -120,6 +138,7 @@ export default function SettingsModal({
   const [unblockingId, setUnblockingId] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const coverFileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -168,7 +187,9 @@ export default function SettingsModal({
       setUsername(profile.username || '');
       setFullName(profile.fullName || '');
       setBio(profile.bio || '');
+      setWebsite(profile.website || '');
       setPhotoURL(profile.photoURL || '');
+      setCoverPhotoURL(profile.coverPhotoURL || '');
     }
   }, [isOpen, profile]);
 
@@ -243,35 +264,6 @@ export default function SettingsModal({
 
   if (!isOpen) return null;
 
-  const compressAvatar = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const img = new Image();
-        img.onload = () => {
-          const size = 256;
-          const canvas = document.createElement('canvas');
-          canvas.width = size;
-          canvas.height = size;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            reject(new Error('Canvas not supported'));
-            return;
-          }
-          const minSide = Math.min(img.width, img.height);
-          const sx = (img.width - minSide) / 2;
-          const sy = (img.height - minSide) / 2;
-          ctx.drawImage(img, sx, sy, minSide, minSide, 0, 0, size, size);
-          resolve(canvas.toDataURL('image/jpeg', 0.82));
-        };
-        img.onerror = () => reject(new Error('Invalid image file'));
-        img.src = ev.target?.result as string;
-      };
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsDataURL(file);
-    });
-  };
-
   const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -283,13 +275,35 @@ export default function SettingsModal({
       return;
     }
     try {
-      const dataUrl = await compressAvatar(file);
+      const dataUrl = await compressSquareImage(file);
       setPhotoURL(dataUrl);
       setFeedback(null);
     } catch {
       setFeedback({
         type: 'error',
         text: language === 'ar' ? 'تعذر معالجة الصورة المختارة' : 'Could not process the selected image',
+      });
+    }
+  };
+
+  const handleCoverFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setFeedback({
+        type: 'error',
+        text: language === 'ar' ? 'يرجى اختيار ملف صورة صالح للغلاف' : 'Please select a valid image file for the cover',
+      });
+      return;
+    }
+    try {
+      const dataUrl = await compressCoverImage(file);
+      setCoverPhotoURL(dataUrl);
+      setFeedback(null);
+    } catch {
+      setFeedback({
+        type: 'error',
+        text: language === 'ar' ? 'تعذر معالجة صورة الغلاف المختارة' : 'Could not process the selected cover image',
       });
     }
   };
@@ -321,15 +335,31 @@ export default function SettingsModal({
       return;
     }
 
+    const rawWebsite = website.trim();
+    const cleanWebsite = rawWebsite ? sanitizeWebsiteUrl(rawWebsite) : '';
+    if (rawWebsite && !cleanWebsite) {
+      setFeedback({
+        type: 'error',
+        text:
+          language === 'ar'
+            ? 'الرابط الشخصي غير صالح. يرجى إدخال رابط يبدأ بـ https:// أو اسم نطاق صحيح.'
+            : 'Invalid website URL. Please enter a valid https:// link or domain.',
+      });
+      return;
+    }
+
     setSaving(true);
     try {
       const payload = {
         username: trimmedUsername,
         fullName: fullName.trim(),
         bio: bio.trim(),
+        website: cleanWebsite,
         photoURL: photoURL.trim(),
+        coverPhotoURL: coverPhotoURL.trim(),
       };
       await updateUserProfile(user.uid, payload);
+      setWebsite(cleanWebsite);
       if (onProfileUpdated) {
         onProfileUpdated(payload);
       }
@@ -767,20 +797,25 @@ export default function SettingsModal({
 
               <div className="border-t border-slate-100 dark:border-slate-800" />
 
-              {/* Mobile Install & Share */}
-              <div className="space-y-2.5">
-                <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
-                  <Smartphone size={17} className="text-purple-500" />
-                  <span>{language === 'ar' ? 'تثبيت ومشاركة التطبيق على الجوال' : 'Install & Share Mobile App'}</span>
+              {/* Mobile Install, Version & Updates */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-sm font-bold text-slate-900 dark:text-white">
+                    <Smartphone size={17} className="text-purple-500" />
+                    <span>{language === 'ar' ? 'التثبيت والإصدار الجديد' : 'App Install & Updates'}</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 text-[11px] font-extrabold tabular-nums">
+                    v{appVersion}
+                  </span>
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   {isInstalled
                     ? language === 'ar'
-                      ? 'التطبيق مثبّت حالياً كتطبيق مستقل على جهازك. يمكنك مشاركة الرابط مع الآخرين.'
-                      : 'App is currently installed on your device. Share the install link with others.'
+                      ? `التطبيق مثبّت ويعمل كتطبيق مستقل (الإصدار ${appVersion}).`
+                      : `App is installed in standalone mode (v${appVersion}).`
                     : language === 'ar'
-                    ? 'ثبّت InstaVibe على هاتفك أو أنشئ حزمة Android APK حقيقية للمشاركة مع الجميع.'
-                    : 'Install InstaVibe on your phone or build an Android APK package to share with friends.'}
+                    ? `ثبّت InstaVibe (v${appVersion}) كتطبيق مستقل على هاتفك أو جهازك.`
+                    : `Install InstaVibe (v${appVersion}) on your device for instant standalone access.`}
                 </p>
                 <div className="flex flex-wrap gap-2 pt-1">
                   {!isInstalled && (
@@ -797,9 +832,43 @@ export default function SettingsModal({
                       className="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-bold flex items-center justify-center gap-1.5 whitespace-nowrap"
                     >
                       <Download size={15} />
-                      <span>{language === 'ar' ? 'تثبيت التطبيق / APK' : 'Install / Get APK'}</span>
+                      <span>{language === 'ar' ? 'تثبيت التطبيق الآن' : 'Install App Now'}</span>
                     </button>
                   )}
+                  <button
+                    type="button"
+                    disabled={checkingUpdate}
+                    onClick={async () => {
+                      if (updateAvailable) {
+                        await applyUpdate();
+                        return;
+                      }
+                      const res = await checkForUpdates();
+                      setFeedback({
+                        type: 'success',
+                        text:
+                          res === 'update-ready'
+                            ? language === 'ar'
+                              ? 'يتوفر تحديث جديد جاهز! اضغط تطبيق التحديث.'
+                              : 'New update ready! Tap Apply Update.'
+                            : language === 'ar'
+                            ? `أنت تستخدم أحدث إصدار (${appVersion}).`
+                            : `You are up to date (v${appVersion}).`,
+                      });
+                    }}
+                    className="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap disabled:opacity-60"
+                  >
+                    <RefreshCw size={15} className={checkingUpdate ? 'animate-spin' : ''} />
+                    <span>
+                      {updateAvailable
+                        ? language === 'ar'
+                          ? 'تحديث الإصدار الآن'
+                          : 'Apply Update Now'
+                        : language === 'ar'
+                        ? 'فحص التحديثات'
+                        : 'Check Updates'}
+                    </span>
+                  </button>
                   <button
                     type="button"
                     onClick={async () => {
@@ -822,10 +891,10 @@ export default function SettingsModal({
                         text: language === 'ar' ? 'تم نسخ رابط التطبيق للمشاركة!' : 'App link copied to clipboard!',
                       });
                     }}
-                    className="flex-1 min-h-[44px] px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
+                    className="min-h-[44px] px-4 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors whitespace-nowrap"
                   >
                     <Share2 size={15} />
-                    <span>{language === 'ar' ? 'مشاركة رابط التطبيق' : 'Share App Link'}</span>
+                    <span>{language === 'ar' ? 'مشاركة' : 'Share'}</span>
                   </button>
                 </div>
               </div>
@@ -835,8 +904,60 @@ export default function SettingsModal({
           {/* TAB 2: EDIT PROFILE */}
           {activeTab === 'profile' && (
             <form onSubmit={handleSaveProfile} className="space-y-4">
+              {/* Cover Photo Section */}
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-300 block">
+                  {language === 'ar' ? 'صورة الغلاف (Cover Photo)' : 'Cover Photo'}
+                </label>
+                <div className="relative h-28 w-full rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-gradient-to-r from-purple-600/20 via-rose-500/20 to-amber-500/20">
+                  {coverPhotoURL ? (
+                    <img
+                      src={coverPhotoURL}
+                      alt={language === 'ar' ? 'صورة الغلاف' : 'Cover'}
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-500 dark:text-slate-400 gap-1">
+                      <ImageIcon size={22} />
+                      <span className="text-[11px] font-medium">
+                        {language === 'ar' ? 'لا توجد صورة غلاف مخصصة' : 'No custom cover photo'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <input
+                  ref={coverFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleCoverFileChange}
+                  className="hidden"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => coverFileInputRef.current?.click()}
+                    className="min-h-[40px] px-3.5 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-100 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                  >
+                    <ImagePlus size={15} />
+                    <span>{language === 'ar' ? 'رفع صورة غلاف' : 'Upload Cover Photo'}</span>
+                  </button>
+                  {coverPhotoURL && (
+                    <button
+                      type="button"
+                      onClick={() => setCoverPhotoURL('')}
+                      className="min-h-[40px] px-3 py-2 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-950/70 text-rose-600 dark:text-rose-400 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-colors whitespace-nowrap"
+                    >
+                      <Trash2 size={14} />
+                      <span>{language === 'ar' ? 'إزالة الغلاف' : 'Remove Cover'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* Avatar Row */}
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-4 pt-1">
                 <div className="w-16 h-16 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 shrink-0">
                   <UserAvatar
                     src={photoURL}
@@ -867,10 +988,11 @@ export default function SettingsModal({
               {/* Photo URL */}
               <div>
                 <label className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1 block">
-                  {language === 'ar' ? 'رابط الصورة (اختياري)' : 'Photo URL (Optional)'}
+                  {language === 'ar' ? 'رابط الصورة الشخصية (اختياري)' : 'Photo URL (Optional)'}
                 </label>
                 <input
                   type="text"
+                  dir="ltr"
                   value={photoURL}
                   onChange={(e) => setPhotoURL(e.target.value)}
                   placeholder="https://..."
@@ -914,7 +1036,7 @@ export default function SettingsModal({
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-                    {language === 'ar' ? 'النبذة التعريفية' : 'Bio'}
+                    {language === 'ar' ? 'السيرة الذاتية (Bio)' : 'Bio'}
                   </label>
                   <span className="text-[11px] text-slate-400 tabular-nums">{bio.length}/220</span>
                 </div>
@@ -923,9 +1045,31 @@ export default function SettingsModal({
                   maxLength={220}
                   value={bio}
                   onChange={(e) => setBio(e.target.value)}
-                  placeholder={language === 'ar' ? 'اكتب نبذة قصيرة عنك...' : 'Tell others a bit about you...'}
+                  placeholder={language === 'ar' ? 'اكتب سيرتك الذاتية أو نبذة عنك...' : 'Tell others a bit about you...'}
                   className="w-full bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 dark:focus:ring-white resize-none"
                 />
+              </div>
+
+              {/* Personal Link / Website */}
+              <div>
+                <label className="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1 block">
+                  {language === 'ar' ? 'الرابط الشخصي / الموقع (اختياري)' : 'Personal Link / Website (Optional)'}
+                </label>
+                <div className="relative">
+                  <Link2
+                    size={16}
+                    className="absolute inset-y-0 start-3.5 my-auto text-slate-400 pointer-events-none"
+                  />
+                  <input
+                    type="text"
+                    dir="ltr"
+                    maxLength={200}
+                    value={website}
+                    onChange={(e) => setWebsite(e.target.value)}
+                    placeholder="https://yourwebsite.com"
+                    className="w-full bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl ps-10 pe-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 dark:focus:ring-white"
+                  />
+                </div>
               </div>
 
               <button

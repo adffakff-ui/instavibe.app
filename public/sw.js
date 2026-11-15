@@ -1,4 +1,4 @@
-const CACHE_NAME = 'instavibe-cache-v4';
+const CACHE_NAME = 'instavibe-cache-v5';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -8,6 +8,12 @@ const ASSETS_TO_CACHE = [
   '/pwa-512x512.png',
   '/apple-touch-icon.png'
 ];
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
 
 // Install Event: Cache core static assets
 self.addEventListener('install', (event) => {

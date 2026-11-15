@@ -1,8 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { collection, query, where, getDocs, doc, getDoc, setDoc, serverTimestamp, deleteDoc, onSnapshot, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
+import { usePWAInstall } from '../hooks/usePWAInstall';
+import { sanitizeWebsiteUrl } from '../lib/authService';
+import { compressCoverImage } from '../utils/imageCompression';
 import {
   Settings,
   Grid,
@@ -23,6 +26,10 @@ import {
   Film,
   Search,
   UserMinus,
+  Link2,
+  ExternalLink,
+  Camera,
+  Download,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
@@ -80,7 +87,11 @@ export default function ProfileView({
     deleteStory,
     archiveStory,
     unsavePost,
+    updateCoverPhoto,
   } = useFirestore();
+  const { isInstalled, isInstallable, install, appVersion } = usePWAInstall();
+  const coverInputRef = useRef<HTMLInputElement>(null);
+  const [updatingCover, setUpdatingCover] = useState(false);
 
   const isOwnProfile = currentUser?.uid === userId;
 
@@ -95,7 +106,9 @@ export default function ProfileView({
         fullName: currentUser.displayName || '',
         email: currentUser.email || '',
         photoURL: currentUser.photoURL || '',
+        coverPhotoURL: '',
         bio: '',
+        website: '',
       }
     );
   }, [currentUser, currentProfile]);
@@ -231,7 +244,9 @@ export default function ProfileView({
                   username: resolvedOwn.username || 'user',
                   fullName: resolvedOwn.fullName || '',
                   bio: resolvedOwn.bio || '',
+                  website: resolvedOwn.website || '',
                   photoURL: resolvedOwn.photoURL || '',
+                  coverPhotoURL: resolvedOwn.coverPhotoURL || '',
                   email: resolvedOwn.email || currentUser?.email || '',
                   createdAt: serverTimestamp(),
                 },
@@ -744,126 +759,281 @@ export default function ProfileView({
     );
   }
 
+  const handleQuickCoverChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !currentUser || !isOwnProfile) return;
+    if (!file.type.startsWith('image/')) {
+      showToast(language === 'ar' ? 'يرجى اختيار ملف صورة صالح' : 'Please select a valid image file');
+      return;
+    }
+    setUpdatingCover(true);
+    try {
+      const compressed = await compressCoverImage(file);
+      await updateCoverPhoto(currentUser.uid, compressed);
+      setProfile((prev: any) => (prev ? { ...prev, coverPhotoURL: compressed } : prev));
+      showToast(language === 'ar' ? 'تم تحديث صورة الغلاف بنجاح!' : 'Cover photo updated!');
+    } catch (err) {
+      console.error('Failed to update cover photo:', err);
+      showToast(language === 'ar' ? 'تعذر تحديث صورة الغلاف' : 'Could not update cover photo');
+    } finally {
+      setUpdatingCover(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveQuickCover = async () => {
+    if (!currentUser || !isOwnProfile || updatingCover) return;
+    setUpdatingCover(true);
+    try {
+      await updateCoverPhoto(currentUser.uid, '');
+      setProfile((prev: any) => (prev ? { ...prev, coverPhotoURL: '' } : prev));
+      showToast(language === 'ar' ? 'تمت إزالة صورة الغلاف.' : 'Cover photo removed.');
+    } catch (err) {
+      console.error('Failed to remove cover photo:', err);
+    } finally {
+      setUpdatingCover(false);
+    }
+  };
+
+  const safeWebsiteUrl = sanitizeWebsiteUrl(activeProfile.website);
+
   return (
     <div className="max-w-screen-md mx-auto pb-20 space-y-6">
-      {/* Profile Header */}
-      <div className="flex flex-col md:flex-row items-center md:items-start gap-8 px-4 md:px-0">
-        <div className="w-24 h-24 md:w-40 md:h-40 rounded-full overflow-hidden border border-slate-200 dark:border-slate-700 shrink-0 bg-slate-100 dark:bg-slate-800">
-          <UserAvatar
-            src={activeProfile.photoURL}
-            username={activeProfile.username}
-            iconSize={40}
-          />
+      {/* Profile Cover & Header */}
+      <div className="px-4 md:px-0">
+        {/* Cover Photo Banner */}
+        <div className="relative h-36 sm:h-48 md:h-52 w-full rounded-3xl overflow-hidden border border-slate-200 dark:border-slate-800 bg-gradient-to-tr from-purple-600/20 via-rose-500/20 to-amber-500/20 shadow-sm">
+          {activeProfile.coverPhotoURL ? (
+            <img
+              src={activeProfile.coverPhotoURL}
+              alt={language === 'ar' ? 'صورة الغلاف' : 'Profile cover'}
+              className="w-full h-full object-cover"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="w-full h-full bg-gradient-to-tr from-slate-200 via-purple-100 to-rose-100 dark:from-slate-900 dark:via-purple-950/60 dark:to-slate-800" />
+          )}
+
+          {isOwnProfile && (
+            <>
+              <input
+                ref={coverInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleQuickCoverChange}
+                className="hidden"
+              />
+              <div className="absolute top-3 end-3 flex items-center gap-1.5 z-10">
+                <button
+                  type="button"
+                  disabled={updatingCover}
+                  onClick={() => coverInputRef.current?.click()}
+                  className="min-h-[36px] px-3 py-1.5 rounded-xl bg-black/60 hover:bg-black/75 backdrop-blur-md text-white text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm disabled:opacity-60"
+                >
+                  {updatingCover ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
+                  <span>
+                    {activeProfile.coverPhotoURL
+                      ? language === 'ar'
+                        ? 'تعديل الغلاف'
+                        : 'Edit Cover'
+                      : language === 'ar'
+                      ? 'إضافة غلاف'
+                      : 'Add Cover'}
+                  </span>
+                </button>
+                {activeProfile.coverPhotoURL && (
+                  <button
+                    type="button"
+                    disabled={updatingCover}
+                    onClick={handleRemoveQuickCover}
+                    aria-label={language === 'ar' ? 'إزالة صورة الغلاف' : 'Remove cover photo'}
+                    title={language === 'ar' ? 'إزالة صورة الغلاف' : 'Remove cover photo'}
+                    className="min-h-[36px] min-w-[36px] rounded-xl bg-black/60 hover:bg-rose-600 backdrop-blur-md text-white flex items-center justify-center transition-colors shadow-sm disabled:opacity-60"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
-        <div className="flex-1 space-y-4 text-center md:text-start">
-          <div className="flex flex-col md:flex-row md:items-center gap-4">
-            <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
-              <h2 className="text-xl font-semibold text-slate-900 dark:text-white">{activeProfile.username}</h2>
-              {!isOwnProfile && followsMe && (
-                <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
-                  {t('followsYou')}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
-              {isOwnProfile ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSettingsTab('profile');
-                      setShowSettingsModal(true);
-                    }}
-                    className="min-h-[44px] px-4 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-sm font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors whitespace-nowrap"
-                  >
-                    {language === 'ar' ? 'تعديل الملف الشخصي' : 'Edit Profile'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSettingsTab('general');
-                      setShowSettingsModal(true);
-                    }}
-                    className="min-h-[44px] min-w-[44px] flex items-center justify-center hover:bg-slate-100 dark:hover:bg-slate-800 rounded-full transition-colors text-slate-700 dark:text-slate-200"
-                    aria-label={language === 'ar' ? 'الإعدادات' : 'Settings'}
-                    title={language === 'ar' ? 'الإعدادات' : 'Settings'}
-                  >
-                    <Settings size={20} />
-                  </button>
-                </>
-              ) : (
-                <>
-                  {!hasBlocked && (
-                    <FollowButton targetUserId={userId} variant="primary" />
-                  )}
-                  {!hasBlocked && (
+        {/* Avatar + Info Row overlapping cover bottom */}
+        <div className="flex flex-col md:flex-row items-center md:items-end gap-5 md:gap-7 -mt-12 md:-mt-14 px-2 sm:px-4 relative z-10">
+          <div className="w-24 h-24 md:w-36 md:h-36 rounded-full overflow-hidden border-4 border-white dark:border-slate-950 shrink-0 bg-slate-100 dark:bg-slate-800 shadow-lg">
+            <UserAvatar
+              src={activeProfile.photoURL}
+              username={activeProfile.username}
+              iconSize={40}
+            />
+          </div>
+
+          <div className="flex-1 w-full space-y-3.5 text-center md:text-start md:pt-14">
+            <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
+              <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">{activeProfile.username}</h2>
+                {!isOwnProfile && followsMe && (
+                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400">
+                    {t('followsYou')}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center justify-center md:justify-start gap-2 flex-wrap">
+                {isOwnProfile ? (
+                  <>
                     <button
                       type="button"
-                      onClick={handleMessage}
-                      className="min-h-[40px] px-5 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-sm font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                      onClick={() => {
+                        setSettingsTab('profile');
+                        setShowSettingsModal(true);
+                      }}
+                      className="min-h-[42px] px-4 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-xl text-sm font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors whitespace-nowrap"
                     >
-                      {language === 'ar' ? 'مراسلة' : 'Message'}
+                      {language === 'ar' ? 'تعديل الملف الشخصي' : 'Edit Profile'}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleBlockClick}
-                    className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm ${
-                      hasBlocked
-                        ? 'bg-red-600 text-white hover:bg-red-700'
-                        : 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/60 hover:bg-red-100 dark:hover:bg-red-950/70'
-                    }`}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSettingsTab('general');
+                        setShowSettingsModal(true);
+                      }}
+                      className="min-h-[42px] min-w-[42px] flex items-center justify-center bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors text-slate-700 dark:text-slate-200"
+                      aria-label={language === 'ar' ? 'الإعدادات' : 'Settings'}
+                      title={language === 'ar' ? 'الإعدادات' : 'Settings'}
+                    >
+                      <Settings size={19} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {!hasBlocked && (
+                      <FollowButton targetUserId={userId} variant="primary" />
+                    )}
+                    {!hasBlocked && (
+                      <button
+                        type="button"
+                        onClick={handleMessage}
+                        className="min-h-[40px] px-5 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl text-sm font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                      >
+                        {language === 'ar' ? 'مراسلة' : 'Message'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleBlockClick}
+                      className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm ${
+                        hasBlocked
+                          ? 'bg-red-600 text-white hover:bg-red-700'
+                          : 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/60 hover:bg-red-100 dark:hover:bg-red-950/70'
+                      }`}
+                    >
+                      <span>
+                        {hasBlocked
+                          ? language === 'ar'
+                            ? 'إلغاء الحظر'
+                            : 'Unblock User'
+                          : language === 'ar'
+                          ? '🚫 حظر المستخدم'
+                          : '🚫 Block User'}
+                      </span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-center md:justify-start gap-8 tabular-nums">
+              <div className="text-sm">
+                <span className="font-bold">{posts.length}</span>{' '}
+                {language === 'ar' ? 'منشورات' : 'posts'}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setFollowListSearch('');
+                  setFollowListType('followers');
+                }}
+                className="text-sm cursor-pointer hover:opacity-70 transition-opacity"
+              >
+                <span className="font-bold">{followersCount}</span>{' '}
+                {language === 'ar' ? 'متابِع' : 'followers'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFollowListSearch('');
+                  setFollowListType('following');
+                }}
+                className="text-sm cursor-pointer hover:opacity-70 transition-opacity"
+              >
+                <span className="font-bold">{followingCount}</span>{' '}
+                {language === 'ar' ? 'يتابع' : 'following'}
+              </button>
+            </div>
+
+            {/* Name, Bio & Personal Website Link */}
+            <div className="space-y-1.5">
+              {activeProfile.fullName && (
+                <p className="font-bold text-sm text-slate-900 dark:text-white">{activeProfile.fullName}</p>
+              )}
+              {activeProfile.bio ? (
+                <p className="text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+                  {activeProfile.bio}
+                </p>
+              ) : isOwnProfile ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettingsTab('profile');
+                    setShowSettingsModal(true);
+                  }}
+                  className="text-xs font-semibold text-purple-600 dark:text-purple-400 hover:underline inline-flex items-center gap-1"
+                >
+                  <Plus size={13} />
+                  <span>{language === 'ar' ? 'أضف سيرة ذاتية ورابط شخصي' : 'Add bio & personal link'}</span>
+                </button>
+              ) : null}
+
+              {safeWebsiteUrl && (
+                <div className="flex items-center justify-center md:justify-start pt-0.5">
+                  <a
+                    href={safeWebsiteUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    dir="ltr"
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-purple-600 dark:text-purple-400 hover:underline max-w-full truncate"
                   >
-                    <span>
-                      {hasBlocked
-                        ? language === 'ar'
-                          ? 'إلغاء الحظر'
-                          : 'Unblock User'
-                        : language === 'ar'
-                        ? '🚫 حظر المستخدم'
-                        : '🚫 Block User'}
-                    </span>
-                  </button>
-                </>
+                    <Link2 size={13} className="shrink-0" />
+                    <span className="truncate">{safeWebsiteUrl.replace(/^https?:\/\//i, '')}</span>
+                    <ExternalLink size={11} className="shrink-0 opacity-75" />
+                  </a>
+                </div>
               )}
             </div>
-          </div>
 
-          <div className="flex items-center justify-center md:justify-start gap-8 tabular-nums">
-            <div className="text-sm">
-              <span className="font-bold">{posts.length}</span>{' '}
-              {language === 'ar' ? 'منشورات' : 'posts'}
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setFollowListSearch('');
-                setFollowListType('followers');
-              }}
-              className="text-sm cursor-pointer hover:opacity-70 transition-opacity"
-            >
-              <span className="font-bold">{followersCount}</span>{' '}
-              {language === 'ar' ? 'متابِع' : 'followers'}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFollowListSearch('');
-                setFollowListType('following');
-              }}
-              className="text-sm cursor-pointer hover:opacity-70 transition-opacity"
-            >
-              <span className="font-bold">{followingCount}</span>{' '}
-              {language === 'ar' ? 'يتابع' : 'following'}
-            </button>
-          </div>
-
-          <div>
-            <p className="font-bold text-sm text-slate-900 dark:text-white">{activeProfile.fullName}</p>
-            <p className="text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
-              {activeProfile.bio || (language === 'ar' ? 'لا توجد نبذة تعريفية بعد.' : 'No bio yet.')}
-            </p>
+            {/* Clean Inside-App Install Action on Mobile Own Profile */}
+            {isOwnProfile && !isInstalled && (
+              <div className="md:hidden pt-1">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (isInstallable) {
+                      const ok = await install();
+                      if (ok) return;
+                    }
+                    window.dispatchEvent(new CustomEvent('instavibe:open-install'));
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/50 border border-purple-200/80 dark:border-purple-800/60 text-purple-700 dark:text-purple-300 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                >
+                  <Download size={14} />
+                  <span>
+                    {language === 'ar'
+                      ? `تثبيت تطبيق InstaVibe على هاتفك (v${appVersion})`
+                      : `Install InstaVibe App on Device (v${appVersion})`}
+                  </span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
