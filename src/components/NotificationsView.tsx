@@ -130,12 +130,19 @@ export default function NotificationsView({
           </div>
         ) : (
           notifications.map((notif) => (
-            <button
+            <div
               key={notif.id}
-              type="button"
+              role="button"
+              tabIndex={0}
               onClick={() => {
                 if (!notif.read) markAsRead(notif.id);
                 if (notif.senderId) onOpenProfile?.(notif.senderId);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  if (!notif.read) markAsRead(notif.id);
+                  if (notif.senderId) onOpenProfile?.(notif.senderId);
+                }
               }}
               className={`w-full text-start flex items-center gap-4 p-4 transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer ${
                 notif.read ? 'opacity-80' : 'bg-slate-50/70 dark:bg-slate-800/30'
@@ -206,7 +213,7 @@ export default function NotificationsView({
               {!notif.read && (
                 <div className="w-2 h-2 bg-blue-500 rounded-full shrink-0" />
               )}
-            </button>
+            </div>
           ))
         )}
       </div>

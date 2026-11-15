@@ -375,6 +375,27 @@ export function useFirestore() {
     }
   };
 
+  const deleteComment = async (postId: string, commentId: string): Promise<boolean> => {
+    try {
+      const commentRef = doc(db, 'posts', postId, 'comments', commentId);
+      const postRef = doc(db, 'posts', postId);
+      await runTransaction(db, async (transaction) => {
+        const postSnap = await transaction.get(postRef);
+        transaction.delete(commentRef);
+        if (postSnap.exists()) {
+          const currentCount = postSnap.data().commentsCount || 0;
+          transaction.update(postRef, {
+            commentsCount: Math.max(0, currentCount - 1),
+          });
+        }
+      });
+      return true;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `posts/${postId}/comments/${commentId}`);
+      return false;
+    }
+  };
+
   const followUser = async (currentUserId: string, targetUserId: string, sender: any): Promise<boolean> => {
     if (!currentUserId || !targetUserId || currentUserId === targetUserId) return false;
     try {
@@ -558,6 +579,7 @@ export function useFirestore() {
         caption,
         likesCount: 0,
         reactionCounts: {},
+        viewsCount: 0,
         createdAt: serverTimestamp(),
         expiresAt: expiresAt.toISOString(),
       };
@@ -834,11 +856,52 @@ export function useFirestore() {
     }
   };
 
+  const recordStoryView = async (
+    storyId: string,
+    viewerId: string,
+    viewerProfile: { username?: string; photoURL?: string }
+  ) => {
+    if (!storyId || !viewerId) return;
+    try {
+      const viewerDocRef = doc(db, 'stories', storyId, 'viewers', viewerId);
+      const storyRef = doc(db, 'stories', storyId);
+
+      await runTransaction(db, async (transaction) => {
+        const viewerSnap = await transaction.get(viewerDocRef);
+        if (viewerSnap.exists()) {
+          // Already recorded view for this user
+          return;
+        }
+
+        const storySnap = await transaction.get(storyRef);
+        const currentViews = storySnap.exists() && typeof storySnap.data().viewsCount === 'number'
+          ? storySnap.data().viewsCount
+          : 0;
+
+        transaction.set(viewerDocRef, {
+          storyId,
+          viewerId,
+          username: (viewerProfile?.username || 'user').slice(0, 50),
+          userPhotoURL: (viewerProfile?.photoURL || '').slice(0, 900000),
+          viewedAt: serverTimestamp(),
+        });
+
+        if (storySnap.exists()) {
+          transaction.update(storyRef, {
+            viewsCount: currentViews + 1,
+          });
+        }
+      });
+    } catch (error) {
+      console.warn('Could not record story view in Firestore:', error);
+    }
+  };
+
   return { 
     createPost, deletePost, savePost, unsavePost,
-    reactToPost, likePost, unlikePost, addComment, likeComment, unlikeComment, 
+    reactToPost, likePost, unlikePost, addComment, likeComment, unlikeComment, deleteComment,
     followUser, unfollowUser, removeFollower, getOrCreateConversation, sendMessage, blockUser, 
-    unblockUser, createStory, voteStoryPoll, reactToStory, removeStoryReaction,
+    unblockUser, createStory, voteStoryPoll, reactToStory, removeStoryReaction, recordStoryView,
     deleteStory, archiveStory, createHighlightAlbum, updateHighlightAlbum,
     deleteHighlightAlbum, addStoryToHighlightAlbum, updateUserProfile, loading 
   };

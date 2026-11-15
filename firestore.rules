@@ -80,13 +80,14 @@ service cloud.firestore {
 
     function isValidStory(data) {
       return data.keys().hasAll(['authorId', 'mediaURL'])
-        && data.keys().hasOnly(['id', 'authorId', 'authorUsername', 'authorPhotoURL', 'mediaURL', 'mediaType', 'caption', 'likesCount', 'reactionCounts', 'poll', 'createdAt', 'expiresAt'])
+        && data.keys().hasOnly(['id', 'authorId', 'authorUsername', 'authorPhotoURL', 'mediaURL', 'mediaType', 'caption', 'likesCount', 'reactionCounts', 'viewsCount', 'poll', 'createdAt', 'expiresAt'])
         && data.authorId == request.auth.uid
         && data.mediaURL is string && data.mediaURL.size() <= 900000
         && (!('mediaType' in data) || data.mediaType == null || data.mediaType in ['image', 'video'])
         && (!('caption' in data) || data.caption == null || (data.caption is string && data.caption.size() <= 1000))
         && (!('likesCount' in data) || data.likesCount == null || (data.likesCount is number && data.likesCount >= 0))
         && (!('reactionCounts' in data) || data.reactionCounts == null || data.reactionCounts is map)
+        && (!('viewsCount' in data) || data.viewsCount == null || (data.viewsCount is number && data.viewsCount >= 0))
         && (!('poll' in data) || data.poll == null || (data.poll is map))
         && (!('expiresAt' in data) || data.expiresAt == null || (data.expiresAt is string && data.expiresAt.size() <= 64));
     }
@@ -130,10 +131,20 @@ service cloud.firestore {
         && (!('reactionCounts' in data) || data.reactionCounts == null || (data.reactionCounts is map && data.reactionCounts.size() <= 10));
     }
 
+    function isValidStoryViewer(data) {
+      return data.keys().hasAll(['storyId', 'viewerId'])
+        && data.keys().hasOnly(['storyId', 'viewerId', 'username', 'userPhotoURL', 'viewedAt'])
+        && isValidId(data.storyId)
+        && data.viewerId == request.auth.uid
+        && (!('username' in data) || data.username == null || (data.username is string && data.username.size() <= 50))
+        && (!('userPhotoURL' in data) || data.userPhotoURL == null || (data.userPhotoURL is string && data.userPhotoURL.size() <= 900000));
+    }
+
     function isValidStoryStatsUpdate(data) {
       return (!('likesCount' in data) || data.likesCount == null || (data.likesCount is number && data.likesCount >= 0))
         && (!('reactionCounts' in data) || data.reactionCounts == null || (data.reactionCounts is map && data.reactionCounts.size() <= 10))
-        && (!('poll' in data) || data.poll == null || data.poll is map);
+        && (!('poll' in data) || data.poll == null || data.poll is map)
+        && (!('viewsCount' in data) || data.viewsCount == null || (data.viewsCount is number && data.viewsCount >= 0));
     }
 
     function isValidHighlight(data) {
@@ -372,7 +383,7 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(storyId) && isValidStory(incoming()) && incoming().createdAt == request.time;
       allow update: if isSignedIn() && isValidId(storyId) && (
         (isOwner(existing().authorId) && isValidStory(incoming()) && incoming().createdAt == existing().createdAt)
-        || (isValidStoryStatsUpdate(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['poll', 'likesCount', 'reactionCounts']) && !isBlocked(existing().authorId, request.auth.uid))
+        || (isValidStoryStatsUpdate(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['poll', 'likesCount', 'reactionCounts', 'viewsCount']) && !isBlocked(existing().authorId, request.auth.uid))
       );
       allow delete: if isSignedIn() && isValidId(storyId) && isOwner(existing().authorId);
 
@@ -391,6 +402,23 @@ service cloud.firestore {
           && incoming().storyId == storyId
           && !isBlocked(get(/databases/$(database)/documents/stories/$(storyId)).data.authorId, userId);
         allow delete: if isSignedIn() && isValidId(storyId) && isValidId(userId) && isOwner(userId);
+      }
+
+      match /viewers/{viewerId} {
+        allow get: if isSignedIn() && isValidId(storyId) && isValidId(viewerId) && (
+          isOwner(viewerId)
+          || isOwner(get(/databases/$(database)/documents/stories/$(storyId)).data.authorId)
+          || !isBlocked(get(/databases/$(database)/documents/stories/$(storyId)).data.authorId, request.auth.uid)
+        );
+        allow list: if isSignedIn() && isValidId(storyId) && resource.data.storyId == storyId;
+        allow create, update: if isSignedIn()
+          && isValidId(storyId)
+          && isValidId(viewerId)
+          && isOwner(viewerId)
+          && isValidStoryViewer(incoming())
+          && incoming().storyId == storyId
+          && !isBlocked(get(/databases/$(database)/documents/stories/$(storyId)).data.authorId, viewerId);
+        allow delete: if isSignedIn() && isValidId(storyId) && isValidId(viewerId) && isOwner(viewerId);
       }
     }
 

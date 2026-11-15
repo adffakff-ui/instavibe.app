@@ -723,6 +723,7 @@ export default function ReelsView({
                     key={c.id}
                     postId={activeCommentsReel.id}
                     comment={c}
+                    postAuthorId={activeCommentsReel.authorId}
                     onOpenProfile={(uid) => {
                       setActiveCommentsReel(null);
                       onOpenProfile(uid);

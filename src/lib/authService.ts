@@ -1,6 +1,7 @@
 import type { User } from 'firebase/auth';
 import {
   doc,
+  enableNetwork,
   getDoc,
   runTransaction,
   serverTimestamp,
@@ -374,7 +375,19 @@ export async function checkUsernameAvailability(
       return { available: true, normalizedKey };
     }
     return { available: false, reason: 'taken', normalizedKey };
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message?.includes('client is offline')) {
+      try {
+        await enableNetwork(db).catch(() => {});
+        const retrySnap = await getDoc(doc(db, 'usernames', normalizedKey));
+        if (!retrySnap.exists() || retrySnap.data()?.uid === currentUid) {
+          return { available: true, normalizedKey };
+        }
+        return { available: false, reason: 'taken', normalizedKey };
+      } catch {
+        return { available: true, normalizedKey };
+      }
+    }
     handleAuthFirestoreError(error, AuthOperationType.GET, path);
   }
 }
@@ -509,6 +522,9 @@ export async function claimUsernameAndSaveProfile(params: {
   } catch (error: any) {
     if (error?.message === 'USERNAME_TAKEN' || error?.message === 'INVALID_USERNAME') {
       throw error;
+    }
+    if (error?.message?.includes('client is offline')) {
+      enableNetwork(db).catch(() => {});
     }
     handleAuthFirestoreError(error, AuthOperationType.WRITE, `users/${params.uid}`);
   }

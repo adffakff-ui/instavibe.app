@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Heart } from 'lucide-react';
+import { Heart, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { doc, onSnapshot } from 'firebase/firestore';
@@ -7,6 +7,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
 import UserAvatar from './UserAvatar';
+import ActionConfirmationModal from './ActionConfirmationModal';
 
 export interface CommentData {
   id: string;
@@ -22,23 +23,33 @@ export interface CommentData {
 interface CommentItemProps {
   postId: string;
   comment: CommentData;
+  postAuthorId?: string;
   onOpenProfile?: (uid: string) => void;
   onReply?: (username: string) => void;
+  onCommentDeleted?: (commentId: string) => void;
 }
 
 export default function CommentItem({
   postId,
   comment,
+  postAuthorId,
   onOpenProfile,
   onReply,
+  onCommentDeleted,
 }: CommentItemProps) {
   const { user, profile, isFirebaseAuthenticated, language } = useAuth();
-  const { likeComment, unlikeComment } = useFirestore();
+  const { likeComment, unlikeComment, deleteComment } = useFirestore();
 
   const [isLiked, setIsLiked] = useState<boolean>(false);
   const [likesCount, setLikesCount] = useState<number>(comment.likesCount || 0);
   const [isAnimating, setIsAnimating] = useState<boolean>(false);
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
   const pendingRef = useRef<boolean>(false);
+
+  const canDelete = Boolean(
+    user && (user.uid === comment.userId || (postAuthorId && user.uid === postAuthorId))
+  );
 
   useEffect(() => {
     if (typeof comment.likesCount === 'number') {
@@ -162,6 +173,19 @@ export default function CommentItem({
             >
               {language === 'ar' ? 'رد' : 'Reply'}
             </button>
+
+            {canDelete && (
+              <button
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="text-slate-400 hover:text-red-600 dark:hover:text-red-400 font-semibold transition-colors flex items-center gap-1 opacity-80 hover:opacity-100"
+                title={language === 'ar' ? 'حذف التعليق' : 'Delete comment'}
+                aria-label={language === 'ar' ? 'حذف التعليق' : 'Delete comment'}
+              >
+                <Trash2 size={11} className="shrink-0" />
+                <span>{language === 'ar' ? 'حذف' : 'Delete'}</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -202,6 +226,38 @@ export default function CommentItem({
           )}
         </button>
       </div>
+
+      <ActionConfirmationModal
+        isOpen={showDeleteModal}
+        onClose={() => {
+          if (!isDeleting) setShowDeleteModal(false);
+        }}
+        onConfirm={async () => {
+          if (!canDelete || isDeleting) return;
+          setIsDeleting(true);
+          try {
+            const ok = await deleteComment(postId, comment.id);
+            if (ok) {
+              setShowDeleteModal(false);
+              onCommentDeleted?.(comment.id);
+            }
+          } catch (err) {
+            console.error('Failed to delete comment:', err);
+          } finally {
+            setIsDeleting(false);
+          }
+        }}
+        type="destructive"
+        title={language === 'ar' ? 'حذف التعليق؟' : 'Delete comment?'}
+        description={
+          language === 'ar'
+            ? 'هل أنت متأكد من رغبتك في حذف هذا التعليق نهائياً؟ لا يمكن التراجع عن هذا الإجراء.'
+            : 'Are you sure you want to permanently delete this comment? This action cannot be undone.'
+        }
+        confirmLabel={language === 'ar' ? 'حذف التعليق' : 'Delete'}
+        cancelLabel={language === 'ar' ? 'إلغاء' : 'Cancel'}
+        isProcessing={isDeleting}
+      />
     </div>
   );
 }

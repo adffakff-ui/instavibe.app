@@ -63,7 +63,7 @@ export default function Navigation({
     <>
       {/* Mobile Bottom Nav */}
       <nav className="fixed bottom-0 inset-x-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 md:hidden">
-        <div className="grid grid-cols-5 items-center h-16 pb-safe">
+        <div className="grid grid-cols-5 items-center h-16 pb-safe px-1">
           {mobileNavItems.map((item) => {
             const isActive = currentView === item.view;
             return (
@@ -72,7 +72,7 @@ export default function Navigation({
                 type="button"
                 onClick={() => setView(item.view)}
                 aria-label={t(item.labelKey)}
-                className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors relative px-1 ${
+                className={`min-h-[44px] min-w-0 flex flex-col items-center justify-center gap-1 transition-colors relative px-0.5 sm:px-1 ${
                   isActive
                     ? 'text-slate-900 dark:text-white'
                     : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -80,7 +80,7 @@ export default function Navigation({
               >
                 {item.isProfile && profile?.photoURL ? (
                   <div
-                    className={`w-6 h-6 rounded-full overflow-hidden border-2 transition-transform ${
+                    className={`w-6 h-6 rounded-full overflow-hidden border-2 transition-transform shrink-0 ${
                       isActive
                         ? 'border-slate-900 dark:border-white scale-105'
                         : 'border-slate-300 dark:border-slate-700'
@@ -96,20 +96,20 @@ export default function Navigation({
                 ) : (
                   <item.icon
                     size={22}
-                    className={
+                    className={`shrink-0 ${
                       isActive && item.view === 'notifications'
                         ? 'text-rose-500 fill-rose-500'
                         : isActive
                         ? 'text-slate-900 dark:text-white'
                         : 'text-slate-400 dark:text-slate-500'
-                    }
+                    }`}
                   />
                 )}
                 <span className="text-[10px] font-medium leading-none truncate max-w-full">
                   {t(item.labelKey)}
                 </span>
                 {item.unread && (
-                  <span className="absolute top-1.5 end-4 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-900" />
+                  <span className="absolute top-1.5 end-3 sm:end-4 w-2 h-2 bg-red-500 rounded-full border border-white dark:border-slate-900" />
                 )}
               </button>
             );

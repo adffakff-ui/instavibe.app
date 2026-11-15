@@ -943,6 +943,7 @@ export default function Post({
                     key={c.id}
                     postId={post.id}
                     comment={c}
+                    postAuthorId={post.authorId}
                     onOpenProfile={onOpenProfile}
                     onReply={handleReplyToUser}
                   />

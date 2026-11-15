@@ -3,7 +3,6 @@ import { collection, query, orderBy, onSnapshot, where, limit } from 'firebase/f
 import { db } from '../lib/firebase';
 import Post from './Post';
 import StoryBar from './StoryBar';
-import PostCreation from './PostCreation';
 import SuggestedUsersCard from './SuggestedUsersCard';
 import { PostSkeleton } from './SkeletonLoaders';
 import { Sparkles, ChevronRight, Users, Image as ImageIcon } from 'lucide-react';
@@ -134,8 +133,6 @@ export default function Feed({
         </div>
         <ChevronRight size={18} className={language === 'ar' ? 'rotate-180 shrink-0' : 'shrink-0'} />
       </button>
-
-      <PostCreation />
 
       {filter === 'all' && (
         <SuggestedUsersCard layout="horizontal" onOpenProfile={onOpenProfile} />

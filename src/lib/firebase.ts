@@ -16,7 +16,7 @@ function createFirestoreInstance() {
     return initializeFirestore(
       app,
       {
-        experimentalForceLongPolling: true,
+        experimentalAutoDetectLongPolling: true,
         ignoreUndefinedProperties: true,
       },
       firebaseConfig.firestoreDatabaseId
@@ -49,6 +49,9 @@ async function validateFirestoreConnection(retried = false): Promise<void> {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
+    enableNetwork(db).catch(() => {});
+  });
+  window.addEventListener('focus', () => {
     enableNetwork(db).catch(() => {});
   });
 }

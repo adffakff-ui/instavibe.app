@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   X, 
   ChevronLeft, 
@@ -12,11 +12,14 @@ import {
   Heart,
   Check,
   BarChart2,
-  Archive
+  Archive,
+  Eye,
+  Users,
+  Sparkles
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
-import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
@@ -40,6 +43,13 @@ export interface StoryReactionEntry {
   reaction: ReactionType;
 }
 
+export interface StoryViewerEntry {
+  viewerId: string;
+  username?: string;
+  userPhotoURL?: string;
+  viewedAt?: any;
+}
+
 export interface StoryItem {
   id: string;
   authorId: string;
@@ -50,35 +60,83 @@ export interface StoryItem {
   caption?: string;
   likesCount?: number;
   reactionCounts?: Record<string, number>;
+  viewsCount?: number;
   poll?: StoryPoll;
   createdAt: any;
   expiresAt?: string;
 }
 
-interface StoryViewerProps {
+export interface StoryUserGroup {
+  authorId: string;
+  authorUsername: string;
+  authorPhotoURL?: string;
   stories: StoryItem[];
+}
+
+interface StoryViewerProps {
+  stories?: StoryItem[];
+  storyGroups?: StoryUserGroup[];
+  initialGroupIndex?: number;
   initialIndex?: number;
   isArchiveMode?: boolean;
   onClose: () => void;
   onStoryDeleted?: (storyId: string) => void;
   onStoryArchived?: (storyId: string) => void;
+  onStoryViewed?: (storyId: string) => void;
 }
 
 export default function StoryViewer({
   stories: initialStories,
+  storyGroups,
+  initialGroupIndex = 0,
   initialIndex = 0,
   isArchiveMode = false,
   onClose,
   onStoryDeleted,
   onStoryArchived,
+  onStoryViewed,
 }: StoryViewerProps) {
   const { user, profile, isFirebaseAuthenticated, language } = useAuth();
-  const { deleteStory, archiveStory, voteStoryPoll, reactToStory, removeStoryReaction, getOrCreateConversation, sendMessage } = useFirestore();
+  const { 
+    deleteStory, 
+    archiveStory, 
+    voteStoryPoll, 
+    reactToStory, 
+    removeStoryReaction, 
+    recordStoryView,
+    getOrCreateConversation, 
+    sendMessage 
+  } = useFirestore();
 
-  const [activeStories, setActiveStories] = useState<StoryItem[]>(initialStories);
-  const [currentIndex, setCurrentIndex] = useState(
-    Math.min(Math.max(0, initialIndex), Math.max(0, initialStories.length - 1))
+  // Normalize input into an array of user story groups
+  const groups: StoryUserGroup[] = useMemo(() => {
+    if (storyGroups && storyGroups.length > 0) {
+      return storyGroups.filter((g) => g.stories && g.stories.length > 0);
+    }
+    if (initialStories && initialStories.length > 0) {
+      return [{
+        authorId: initialStories[0].authorId,
+        authorUsername: initialStories[0].authorUsername,
+        authorPhotoURL: initialStories[0].authorPhotoURL,
+        stories: initialStories,
+      }];
+    }
+    return [];
+  }, [storyGroups, initialStories]);
+
+  // Current user group state (for continuous sequence across all users)
+  const [currentGroupIndex, setCurrentGroupIndex] = useState(() => 
+    Math.min(Math.max(0, initialGroupIndex), Math.max(0, groups.length - 1))
   );
+
+  const currentGroup = groups[currentGroupIndex] || groups[0];
+  const [activeStories, setActiveStories] = useState<StoryItem[]>(currentGroup?.stories || []);
+  
+  // Index of story within current user's stories
+  const [currentIndex, setCurrentIndex] = useState(() =>
+    Math.min(Math.max(0, initialIndex), Math.max(0, (currentGroup?.stories?.length || 1) - 1))
+  );
+
   const [progress, setProgress] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
@@ -90,58 +148,122 @@ export default function StoryViewer({
 
   // Story reaction & burst states
   const [storyReactions, setStoryReactions] = useState<StoryReactionEntry[]>([]);
+  const [storyViewers, setStoryViewers] = useState<StoryViewerEntry[]>([]);
+  const [showViewersSheet, setShowViewersSheet] = useState(false);
+  const [viewersSheetTab, setViewersSheetTab] = useState<'viewers' | 'reactions'>('viewers');
+
   const [bursts, setBursts] = useState<BurstInstance[]>([]);
   const [floatingReactions, setFloatingReactions] = useState<{ id: number; emoji: string; offset: number }[]>([]);
   const [heartPopping, setHeartPopping] = useState(false);
-  const [showReactionsList, setShowReactionsList] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaCanvasRef = useRef<HTMLDivElement>(null);
   const progressTimerRef = useRef<any>(null);
   const lastTapRef = useRef<number>(0);
   const singleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const recordedViewsRef = useRef<Set<string>>(new Set());
+
+  // Update active group stories when group index changes
+  useEffect(() => {
+    if (currentGroup) {
+      setActiveStories(currentGroup.stories);
+      setCurrentIndex(0);
+      setProgress(0);
+      setReplySent(false);
+    }
+  }, [currentGroupIndex, groups]);
 
   const currentStory = activeStories[currentIndex];
-  const isOwner = user && currentStory && currentStory.authorId === user.uid;
+  const isOwner = Boolean(user && currentStory && currentStory.authorId === user.uid);
 
+  // Next and previous groups for sequential previews
+  const nextGroup = currentGroupIndex < groups.length - 1 ? groups[currentGroupIndex + 1] : null;
+  const prevGroup = currentGroupIndex > 0 ? groups[currentGroupIndex - 1] : null;
+
+  // Record story view automatically
   useEffect(() => {
-    setActiveStories(initialStories);
-    if (currentIndex >= initialStories.length) {
-      setCurrentIndex(Math.max(0, initialStories.length - 1));
+    if (!currentStory?.id || !user || !isFirebaseAuthenticated) return;
+    
+    // Notify parent component
+    if (onStoryViewed) {
+      onStoryViewed(currentStory.id);
     }
-  }, [initialStories]);
 
-  useEffect(() => {
-    setCurrentIndex(Math.min(Math.max(0, initialIndex), Math.max(0, initialStories.length - 1)));
-    setProgress(0);
-  }, [initialIndex]);
+    // Record view in Firestore once per story per session
+    if (!recordedViewsRef.current.has(currentStory.id)) {
+      recordedViewsRef.current.add(currentStory.id);
+      recordStoryView(currentStory.id, user.uid, {
+        username: profile?.username || 'user',
+        photoURL: profile?.photoURL || '',
+      });
+    }
+  }, [currentStory?.id, user, isFirebaseAuthenticated]);
 
+  // Expiration format helper
   const getExpiresRemaining = (expiresAtStr?: string) => {
     if (!expiresAtStr) return null;
     try {
       const expires = new Date(expiresAtStr).getTime();
-      const diffHours = Math.max(0, Math.round((expires - Date.now()) / (1000 * 60 * 60)));
-      if (diffHours <= 0) return language === 'ar' ? 'تنتهي قريباً' : 'Expiring soon';
-      if (diffHours === 1) return language === 'ar' ? 'متبقي ساعة واحدة' : '1h left';
-      return language === 'ar' ? `متبقي ${diffHours} ساعة` : `${diffHours}h left`;
+      const diffMs = expires - Date.now();
+      if (diffMs <= 0) {
+        return { text: language === 'ar' ? 'انتهت الصلاحية' : 'Expired', isUrgent: true };
+      }
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+      const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+      if (diffHours <= 0) {
+        return { 
+          text: language === 'ar' ? `متبقي ${diffMinutes} دقيقة` : `${diffMinutes}m left`, 
+          isUrgent: true 
+        };
+      }
+      if (diffHours === 1) {
+        return { 
+          text: language === 'ar' ? 'متبقي ساعة واحدة' : '1h left', 
+          isUrgent: true 
+        };
+      }
+      return { 
+        text: language === 'ar' ? `متبقي ${diffHours} س` : `${diffHours}h left`, 
+        isUrgent: diffHours <= 2 
+      };
     } catch {
       return null;
     }
   };
 
+  // Sequence navigation: Next story or next user group
   const handleNext = () => {
     if (currentIndex < activeStories.length - 1) {
+      // Advance to next story of same user
       setCurrentIndex((prev) => prev + 1);
       setProgress(0);
       setReplySent(false);
+    } else if (currentGroupIndex < groups.length - 1) {
+      // Seamlessly advance to NEXT user's story sequence!
+      setCurrentGroupIndex((prev) => prev + 1);
+      setCurrentIndex(0);
+      setProgress(0);
+      setReplySent(false);
     } else {
+      // Reached the very end of all stories across all users
       onClose();
     }
   };
 
+  // Sequence navigation: Previous story or previous user group
   const handlePrev = () => {
     if (currentIndex > 0) {
+      // Go to previous story of same user
       setCurrentIndex((prev) => prev - 1);
+      setProgress(0);
+      setReplySent(false);
+    } else if (currentGroupIndex > 0) {
+      // Go back to PREVIOUS user's last story
+      const targetPrevGroup = groups[currentGroupIndex - 1];
+      const targetIndex = Math.max(0, (targetPrevGroup?.stories?.length || 1) - 1);
+      setCurrentGroupIndex((prev) => prev - 1);
+      setCurrentIndex(targetIndex);
       setProgress(0);
       setReplySent(false);
     }
@@ -156,7 +278,6 @@ export default function StoryViewer({
 
   // Real-time story reactions listener
   useEffect(() => {
-    setShowReactionsList(false);
     if (!currentStory?.id || !user || !isFirebaseAuthenticated) {
       setStoryReactions([]);
       return;
@@ -186,6 +307,38 @@ export default function StoryViewer({
     return unsub;
   }, [currentStory?.id, user, isFirebaseAuthenticated]);
 
+  // Real-time story viewers listener (active for story author or insight checks)
+  useEffect(() => {
+    if (!isOwner || !currentStory?.id || !isFirebaseAuthenticated) {
+      setStoryViewers([]);
+      return;
+    }
+
+    const viewersRef = query(
+      collection(db, 'stories', currentStory.id, 'viewers'),
+      orderBy('viewedAt', 'desc'),
+      limit(100)
+    );
+    const unsub = onSnapshot(
+      viewersRef,
+      (snap) => {
+        const list: StoryViewerEntry[] = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            viewerId: d.id,
+            username: data.username,
+            userPhotoURL: data.userPhotoURL,
+            viewedAt: data.viewedAt,
+          };
+        });
+        setStoryViewers(list);
+      },
+      (err) => console.warn('Story viewers listener notice:', err)
+    );
+
+    return unsub;
+  }, [currentStory?.id, isOwner, isFirebaseAuthenticated]);
+
   // Progress Bar Timer for Images / Fallback
   useEffect(() => {
     setProgress(0);
@@ -193,7 +346,7 @@ export default function StoryViewer({
 
     if (!currentStory) return;
 
-    // For video, we handle progress via onTimeUpdate unless it fails to play
+    // For video, we handle progress via onTimeUpdate
     if (currentStory.mediaType === 'video') {
       return;
     }
@@ -203,7 +356,7 @@ export default function StoryViewer({
     const STEP = (INTERVAL_MS / DURATION_MS) * 100;
 
     progressTimerRef.current = setInterval(() => {
-      if (isPaused || confirmDelete || showReactionsList) return;
+      if (isPaused || confirmDelete || showViewersSheet) return;
 
       setProgress((prev) => {
         if (prev >= 100) {
@@ -217,7 +370,7 @@ export default function StoryViewer({
     return () => {
       if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     };
-  }, [currentIndex, currentStory, isPaused, confirmDelete, showReactionsList, activeStories.length]);
+  }, [currentIndex, currentStory, currentGroupIndex, isPaused, confirmDelete, showViewersSheet, activeStories.length]);
 
   // Video Time Update Handler
   const handleVideoTimeUpdate = () => {
@@ -233,7 +386,10 @@ export default function StoryViewer({
   // Keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        if (showViewersSheet) setShowViewersSheet(false);
+        else onClose();
+      }
       if (e.key === 'ArrowRight') {
         if (language === 'ar') handlePrev();
         else handleNext();
@@ -249,12 +405,12 @@ export default function StoryViewer({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentIndex, activeStories.length]);
+  }, [currentIndex, currentGroupIndex, activeStories.length, showViewersSheet]);
 
   // Pause / Resume Video
   useEffect(() => {
     if (videoRef.current && currentStory?.mediaType === 'video') {
-      if (isPaused || confirmDelete) {
+      if (isPaused || confirmDelete || showViewersSheet) {
         videoRef.current.pause();
         setIsVideoPlaying(false);
       } else {
@@ -262,7 +418,7 @@ export default function StoryViewer({
         setIsVideoPlaying(true);
       }
     }
-  }, [isPaused, confirmDelete, currentStory]);
+  }, [isPaused, confirmDelete, showViewersSheet, currentStory]);
 
   const handleArchiveCurrentStory = async () => {
     if (!currentStory || !isOwner || archiving) return;
@@ -275,7 +431,7 @@ export default function StoryViewer({
       }
       const updated = activeStories.filter((s) => s.id !== storyIdToArchive);
       if (updated.length === 0) {
-        onClose();
+        handleNext();
       } else {
         setActiveStories(updated);
         setCurrentIndex((prev) => Math.min(prev, updated.length - 1));
@@ -300,7 +456,7 @@ export default function StoryViewer({
 
       const updated = activeStories.filter((s) => s.id !== storyIdToDelete);
       if (updated.length === 0) {
-        onClose();
+        handleNext();
       } else {
         setActiveStories(updated);
         setCurrentIndex((prev) => Math.min(prev, updated.length - 1));
@@ -317,7 +473,6 @@ export default function StoryViewer({
     try {
       await voteStoryPoll(currentStory.id, user.uid, choice, currentStory.poll);
       
-      // Optimistic / Local update
       const updatedPoll = { ...currentStory.poll };
       const voters = updatedPoll.voters || {};
       const prevChoice = voters[user.uid];
@@ -349,7 +504,7 @@ export default function StoryViewer({
     setBursts((prev) => [...prev, { id, emoji, x, y }]);
     setTimeout(() => {
       setBursts((prev) => prev.filter((b) => b.id !== id));
-    }, 820);
+    }, 850);
   };
 
   const spawnFloatingReaction = (emoji: string) => {
@@ -358,7 +513,7 @@ export default function StoryViewer({
     setFloatingReactions((prev) => [...prev, { id, emoji, offset }]);
     setTimeout(() => {
       setFloatingReactions((prev) => prev.filter((item) => item.id !== id));
-    }, 1150);
+    }, 1200);
   };
 
   const currentUserReaction: ReactionType | null =
@@ -376,6 +531,11 @@ export default function StoryViewer({
 
   const totalStoryReactionsCount =
     storyReactions.length > 0 ? storyReactions.length : currentStory?.likesCount || 0;
+
+  const totalViewsCount = Math.max(
+    currentStory?.viewsCount || 0,
+    storyViewers.length
+  );
 
   const applyStoryReaction = async (
     reaction: ReactionType,
@@ -440,6 +600,7 @@ export default function StoryViewer({
     const x = rect ? ((e.clientX - rect.left) / rect.width) * 100 : 50;
     const y = rect ? ((e.clientY - rect.top) / rect.height) * 100 : 50;
 
+    // Double-tap to heart
     if (now - lastTapRef.current < 280) {
       lastTapRef.current = 0;
       if (singleTapTimerRef.current) {
@@ -487,7 +648,7 @@ export default function StoryViewer({
 
   if (!currentStory) return null;
 
-  const expiresRemaining = getExpiresRemaining(currentStory.expiresAt);
+  const expiresInfo = getExpiresRemaining(currentStory.expiresAt);
   const userVote = user && currentStory.poll?.voters ? currentStory.poll.voters[user.uid] : null;
   const totalVotes = (currentStory.poll?.votesA || 0) + (currentStory.poll?.votesB || 0);
   const pctA = totalVotes > 0 ? Math.round(((currentStory.poll?.votesA || 0) / totalVotes) * 100) : 50;
@@ -496,14 +657,14 @@ export default function StoryViewer({
 
   return (
     <div className="fixed inset-0 z-[130] bg-black/95 sm:bg-black/90 backdrop-blur-md flex items-center justify-center sm:p-4 select-none">
-      {/* Blurred background image */}
+      {/* Blurred background ambiance */}
       {currentStory.mediaType !== 'video' && (
         <div className="absolute inset-0 opacity-40 blur-3xl overflow-hidden pointer-events-none scale-125">
           <img src={currentStory.mediaURL} alt="" className="w-full h-full object-cover" />
         </div>
       )}
 
-      {/* Main Story Container (Instagram-like 9:16 aspect ratio) */}
+      {/* Main Story Container (9:16 Aspect Ratio) */}
       <div 
         className="relative w-full max-w-[420px] h-full sm:h-[92vh] sm:max-h-[820px] aspect-[9/16] bg-slate-950 rounded-none sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col border border-white/10"
         onMouseDown={() => setIsPaused(true)}
@@ -511,21 +672,31 @@ export default function StoryViewer({
         onTouchStart={() => setIsPaused(true)}
         onTouchEnd={() => setIsPaused(false)}
       >
-        {/* Top Segmented Progress Bars */}
+        {/* Top Segmented Progress Bars & Multi-user Sequence Header */}
         <div className="absolute top-2.5 inset-x-3 flex flex-col gap-1 z-30">
-          <div className="flex items-center justify-between text-[10px] font-semibold text-white/80 px-0.5">
-            <span className="drop-shadow-sm">
-              {language === 'ar'
-                ? `المقطع ${currentIndex + 1} من ${activeStories.length}`
-                : `Segment ${currentIndex + 1} of ${activeStories.length}`}
-            </span>
-            <span className="drop-shadow-sm font-mono tabular-nums">
+          <div className="flex items-center justify-between text-[10px] font-semibold text-white/85 px-0.5">
+            <div className="flex items-center gap-1.5 drop-shadow-sm">
+              <span className="bg-white/20 backdrop-blur-md px-1.5 py-0.5 rounded-full font-medium">
+                {language === 'ar'
+                  ? `المقطع ${currentIndex + 1} / ${activeStories.length}`
+                  : `Segment ${currentIndex + 1} / ${activeStories.length}`}
+              </span>
+              {groups.length > 1 && (
+                <span className="text-white/60 font-normal">
+                  • {language === 'ar' ? `حساب ${currentGroupIndex + 1} من ${groups.length}` : `User ${currentGroupIndex + 1} of ${groups.length}`}
+                </span>
+              )}
+            </div>
+            
+            {/* Countdown seconds for active story */}
+            <span className="drop-shadow-sm font-mono tabular-nums text-white/80">
               {language === 'ar'
                 ? `متبقي ${Math.max(0, Math.round(5 - (progress / 100) * 5))} ث`
-                : `${Math.max(0, Math.round(5 - (progress / 100) * 5))}s left`}
+                : `${Math.max(0, Math.round(5 - (progress / 100) * 5))}s`}
             </span>
           </div>
 
+          {/* Segmented Line for Active User's Stories */}
           <div className="flex gap-1.5" dir="ltr">
             {activeStories.map((_, idx) => {
               const isCurrent = idx === currentIndex;
@@ -552,11 +723,11 @@ export default function StoryViewer({
         {/* Story Header */}
         <div className="absolute top-12 inset-x-3 flex items-center justify-between z-30 pointer-events-auto">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-full ring-2 ring-purple-500/80 overflow-hidden bg-slate-800 shrink-0">
+            <div className="w-10 h-10 rounded-full ring-2 ring-gradient-to-tr ring-purple-500 overflow-hidden bg-slate-800 shrink-0 shadow-md">
               <UserAvatar
                 src={currentStory.authorPhotoURL}
                 username={currentStory.authorUsername}
-                iconSize={16}
+                iconSize={18}
               />
             </div>
             <div className="flex flex-col">
@@ -570,6 +741,8 @@ export default function StoryViewer({
                     : (language === 'ar' ? 'الآن' : 'just now')}
                 </span>
               </div>
+              
+              {/* Expiration or Archive Badge */}
               {isArchiveMode ? (
                 <div className="flex items-center gap-1 text-[10px] text-purple-300 font-semibold">
                   <Archive size={10} />
@@ -578,16 +751,16 @@ export default function StoryViewer({
                       ? format(currentStory.createdAt.toDate(), 'd MMM yyyy', {
                           locale: language === 'ar' ? ar : undefined,
                         })
-                      : language === 'ar'
-                      ? 'قصة مؤرشفة'
-                      : 'Archived'}
+                      : (language === 'ar' ? 'قصة مؤرشفة' : 'Archived')}
                   </span>
                 </div>
               ) : (
-                expiresRemaining && (
-                  <div className="flex items-center gap-1 text-[10px] text-amber-300 font-medium">
+                expiresInfo && (
+                  <div className={`flex items-center gap-1 text-[10px] font-medium ${
+                    expiresInfo.isUrgent ? 'text-amber-300 animate-pulse' : 'text-slate-300'
+                  }`}>
                     <Clock size={10} />
-                    <span>{expiresRemaining}</span>
+                    <span>{expiresInfo.text}</span>
                   </div>
                 )
               )}
@@ -630,7 +803,7 @@ export default function StoryViewer({
                 {confirmDelete ? (
                   <div 
                     onClick={(e) => e.stopPropagation()}
-                    className="flex items-center gap-1 bg-red-600/90 text-white rounded-full px-2 py-1 text-[11px] font-semibold"
+                    className="flex items-center gap-1 bg-red-600/90 text-white rounded-full px-2 py-1 text-[11px] font-semibold shadow-lg"
                   >
                     <span>{language === 'ar' ? 'حذف؟' : 'Delete?'}</span>
                     <button 
@@ -688,7 +861,7 @@ export default function StoryViewer({
 
           {/* Floating Story Reactions */}
           {floatingReactions.length > 0 && (
-            <div className="absolute bottom-8 inset-x-0 flex justify-center pointer-events-none z-30">
+            <div className="absolute bottom-12 inset-x-0 flex justify-center pointer-events-none z-30">
               {floatingReactions.map((item) => (
                 <span
                   key={item.id}
@@ -796,7 +969,7 @@ export default function StoryViewer({
           )}
 
           {/* Pause Indicator overlay when holding */}
-          {isPaused && (
+          {isPaused && !showViewersSheet && (
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 p-3 bg-black/60 backdrop-blur-md rounded-full text-white pointer-events-none z-20">
               <Pause size={24} />
             </div>
@@ -817,36 +990,42 @@ export default function StoryViewer({
           </div>
 
           {/* Desktop Navigation Chevrons */}
-          {currentIndex > 0 && (
+          {(currentGroupIndex > 0 || currentIndex > 0) && (
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 handlePrev();
               }}
-              className="hidden sm:flex absolute start-3 top-1/2 -translate-y-1/2 p-2 bg-black/40 hover:bg-black/70 text-white rounded-full transition-all z-20 backdrop-blur-sm"
+              className="hidden sm:flex absolute start-3 top-1/2 -translate-y-1/2 p-2.5 bg-black/50 hover:bg-black/80 text-white rounded-full transition-all z-20 backdrop-blur-sm border border-white/15 hover:scale-105"
               title={language === 'ar' ? 'السابق' : 'Previous'}
             >
-              {language === 'ar' ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+              {language === 'ar' ? <ChevronRight size={22} /> : <ChevronLeft size={22} />}
             </button>
           )}
 
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleNext();
-            }}
-            className="hidden sm:flex absolute end-3 top-1/2 -translate-y-1/2 p-2 bg-black/40 hover:bg-black/70 text-white rounded-full transition-all z-20 backdrop-blur-sm"
-            title={language === 'ar' ? 'التالي' : 'Next'}
-          >
-            {language === 'ar' ? <ChevronLeft size={20} /> : <ChevronRight size={20} />}
-          </button>
+          {(currentGroupIndex < groups.length - 1 || currentIndex < activeStories.length - 1) && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleNext();
+              }}
+              className="hidden sm:flex absolute end-3 top-1/2 -translate-y-1/2 p-2.5 bg-black/50 hover:bg-black/80 text-white rounded-full transition-all z-20 backdrop-blur-sm border border-white/15 hover:scale-105 group"
+              title={
+                currentIndex === activeStories.length - 1 && nextGroup
+                  ? (language === 'ar' ? `الانتقال إلى قصة ${nextGroup.authorUsername}` : `Next user: ${nextGroup.authorUsername}`)
+                  : (language === 'ar' ? 'التالي' : 'Next')
+              }
+            >
+              {language === 'ar' ? <ChevronLeft size={22} /> : <ChevronRight size={22} />}
+            </button>
+          )}
         </div>
 
         {/* Bottom Area: Caption + Persistent Like/Reactions + Direct Message reply */}
         <div 
-          className="relative z-30 p-4 bg-gradient-to-t from-black/90 via-black/65 to-transparent space-y-3 pointer-events-auto"
+          className="relative z-30 p-3.5 sm:p-4 bg-gradient-to-t from-black/95 via-black/75 to-transparent space-y-2.5 pointer-events-auto"
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
@@ -860,53 +1039,36 @@ export default function StoryViewer({
             </div>
           )}
 
-          {/* Owner Story Reactions Breakdown */}
+          {/* Owner Story Insights & Viewers Bar */}
           {isOwner && (
-            <div className="space-y-2">
-              {showReactionsList && (
-                <div className="bg-slate-900/95 backdrop-blur-xl border border-white/15 rounded-2xl p-3 max-h-44 overflow-y-auto no-scrollbar space-y-2">
-                  <div className="flex items-center justify-between text-xs font-bold text-white/80">
-                    <span>
-                      {language === 'ar' ? 'تفاعلات المشاهدين' : 'Story Reactions'}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setShowReactionsList(false)}
-                      className="text-white/60 hover:text-white p-1"
-                      aria-label={language === 'ar' ? 'إغلاق' : 'Close'}
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                  {storyReactions.length === 0 ? (
-                    <p className="text-xs text-white/50 text-center py-2">
-                      {language === 'ar' ? 'لا توجد تفاعلات بعد' : 'No reactions yet'}
-                    </p>
-                  ) : (
-                    storyReactions.map((entry) => (
-                      <div key={entry.userId} className="flex items-center justify-between text-xs text-white py-1">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <div className="w-6 h-6 rounded-full overflow-hidden border border-white/20 shrink-0">
-                            <UserAvatar
-                              src={entry.userPhotoURL}
-                              username={entry.username}
-                              iconSize={12}
-                            />
-                          </div>
-                          <span className="font-semibold truncate">{entry.username || 'user'}</span>
-                        </div>
-                        <span className="text-base">{REACTION_MAP[entry.reaction].emoji}</span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-
-              <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 bg-white/10 backdrop-blur-md border border-white/15 rounded-2xl p-2">
+              <div className="flex items-center gap-2">
+                {/* Viewers Counter Button */}
                 <button
                   type="button"
-                  onClick={() => setShowReactionsList((prev) => !prev)}
-                  className="min-h-[40px] px-3.5 py-2 rounded-full bg-white/15 hover:bg-white/25 border border-white/20 text-white text-xs font-bold flex items-center gap-2 transition-all active:scale-95"
+                  onClick={() => {
+                    setViewersSheetTab('viewers');
+                    setShowViewersSheet(true);
+                  }}
+                  className="min-h-[38px] px-3 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 border border-white/20"
+                  title={language === 'ar' ? 'عرض قائمة المشاهدين' : 'View viewers list'}
+                >
+                  <Eye size={15} className="text-blue-400" />
+                  <span className="tabular-nums font-bold">
+                    {totalViewsCount}{' '}
+                    {language === 'ar' ? 'مشاهدة' : totalViewsCount === 1 ? 'view' : 'views'}
+                  </span>
+                </button>
+
+                {/* Reactions Breakdown Button */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setViewersSheetTab('reactions');
+                    setShowViewersSheet(true);
+                  }}
+                  className="min-h-[38px] px-3 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 border border-white/20"
+                  title={language === 'ar' ? 'عرض تفاعلات القصة' : 'View story reactions'}
                 >
                   {topStoryReactions.length > 0 ? (
                     <span className="flex items-center -space-x-1 rtl:space-x-reverse">
@@ -917,18 +1079,31 @@ export default function StoryViewer({
                   ) : (
                     <Heart size={15} className="text-rose-400" />
                   )}
-                  <span className="tabular-nums">
+                  <span className="tabular-nums font-bold">
                     {totalStoryReactionsCount}{' '}
                     {language === 'ar' ? 'تفاعل' : totalStoryReactionsCount === 1 ? 'reaction' : 'reactions'}
                   </span>
                 </button>
               </div>
+
+              {/* Next Sequence Preview if exists */}
+              {nextGroup && (
+                <button
+                  type="button"
+                  onClick={() => handleNext()}
+                  className="text-[11px] text-purple-300 hover:text-white font-medium flex items-center gap-1 px-2 py-1"
+                >
+                  <span>{language === 'ar' ? 'التالي' : 'Next'}</span>
+                  <span className="max-w-[70px] truncate font-bold">@{nextGroup.authorUsername}</span>
+                  {language === 'ar' ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}
+                </button>
+              )}
             </div>
           )}
 
           {/* Reply & Reactions Bar (for viewers) */}
           {!isOwner && user && (
-            <div className="space-y-2.5">
+            <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <input
                   type="text"
@@ -950,7 +1125,7 @@ export default function StoryViewer({
                   <button
                     type="button"
                     onClick={() => handleSendReply()}
-                    className="min-h-[40px] min-w-[40px] flex items-center justify-center bg-white text-slate-900 rounded-full hover:bg-slate-100 transition-all active:scale-95 shrink-0"
+                    className="min-h-[40px] min-w-[40px] flex items-center justify-center bg-white text-slate-900 rounded-full hover:bg-slate-100 transition-all active:scale-95 shrink-0 shadow-md"
                     title={language === 'ar' ? 'إرسال الرد' : 'Send reply'}
                     aria-label={language === 'ar' ? 'إرسال الرد' : 'Send reply'}
                   >
@@ -966,7 +1141,7 @@ export default function StoryViewer({
                   }
                   aria-label={language === 'ar' ? 'إعجاب بالقصة' : 'Like story'}
                   aria-pressed={Boolean(currentUserReaction)}
-                  className={`min-h-[40px] px-3 rounded-full border flex items-center gap-1.5 transition-all active:scale-90 shrink-0 ${
+                  className={`min-h-[40px] px-3.5 rounded-full border flex items-center gap-1.5 transition-all active:scale-90 shrink-0 ${
                     currentUserReaction
                       ? 'bg-rose-500/25 border-rose-400/70 text-rose-300'
                       : 'bg-white/15 hover:bg-white/25 border-white/20 text-white'
@@ -993,7 +1168,7 @@ export default function StoryViewer({
               </div>
 
               {/* Persistent Clickable Quick Reactions */}
-              <div className="flex items-center justify-between gap-1 px-1">
+              <div className="flex items-center justify-between gap-1 px-0.5">
                 {REACTIONS.map((item) => {
                   const isSelected = currentUserReaction === item.type;
                   const count = derivedReactionCounts[item.type] || 0;
@@ -1005,7 +1180,7 @@ export default function StoryViewer({
                       aria-label={language === 'ar' ? item.labelAr : item.labelEn}
                       aria-pressed={isSelected}
                       title={language === 'ar' ? item.labelAr : item.labelEn}
-                      className={`min-h-[40px] flex-1 flex items-center justify-center gap-1 rounded-full transition-all active:scale-90 ${
+                      className={`min-h-[38px] flex-1 flex items-center justify-center gap-1 rounded-full transition-all active:scale-90 ${
                         isSelected
                           ? 'bg-white/25 ring-1 ring-white/60 scale-105'
                           : 'hover:bg-white/15'
@@ -1032,6 +1207,146 @@ export default function StoryViewer({
             </div>
           )}
         </div>
+
+        {/* Viewers & Activity Bottom Sheet (for Story Author) */}
+        {showViewersSheet && (
+          <div 
+            className="absolute inset-x-0 bottom-0 top-24 z-40 bg-slate-950/95 backdrop-blur-xl rounded-t-3xl border-t border-white/20 p-4 flex flex-col animate-in slide-in-from-bottom duration-250"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Sheet Handle & Header */}
+            <div className="flex items-center justify-between pb-3 border-b border-white/10">
+              <div className="flex items-center gap-2">
+                <Users size={16} className="text-purple-400" />
+                <h3 className="text-sm font-bold text-white">
+                  {language === 'ar' ? 'نشاط القصة وتفاعلاتها' : 'Story Activity & Insights'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowViewersSheet(false)}
+                className="p-1.5 text-white/70 hover:text-white rounded-full bg-white/10 hover:bg-white/20"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Quick Metrics */}
+            <div className="grid grid-cols-2 gap-2 my-3">
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-2.5 text-center">
+                <span className="text-[10px] text-white/60 block font-medium">
+                  {language === 'ar' ? 'إجمالي المشاهدات' : 'Total Views'}
+                </span>
+                <span className="text-lg font-black text-white tabular-nums">
+                  {totalViewsCount}
+                </span>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-2.5 text-center">
+                <span className="text-[10px] text-white/60 block font-medium">
+                  {language === 'ar' ? 'إجمالي التفاعلات' : 'Total Reactions'}
+                </span>
+                <span className="text-lg font-black text-white tabular-nums">
+                  {totalStoryReactionsCount}
+                </span>
+              </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex rounded-xl bg-white/10 p-1 mb-3">
+              <button
+                type="button"
+                onClick={() => setViewersSheetTab('viewers')}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                  viewersSheetTab === 'viewers'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'text-white/70 hover:text-white'
+                }`}
+              >
+                {language === 'ar' ? `المشاهدون (${totalViewsCount})` : `Viewers (${totalViewsCount})`}
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewersSheetTab('reactions')}
+                className={`flex-1 py-1.5 text-xs font-bold rounded-lg transition-all ${
+                  viewersSheetTab === 'reactions'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : 'text-white/70 hover:text-white'
+                }`}
+              >
+                {language === 'ar' ? `التفاعلات (${totalStoryReactionsCount})` : `Reactions (${totalStoryReactionsCount})`}
+              </button>
+            </div>
+
+            {/* Tab Contents: Viewers List */}
+            <div className="flex-1 overflow-y-auto no-scrollbar space-y-2">
+              {viewersSheetTab === 'viewers' && (
+                storyViewers.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-white/50 space-y-1">
+                    <Eye size={24} className="mx-auto text-white/30 mb-2" />
+                    <p>{language === 'ar' ? 'لا توجد مشاهدات مسجلة بعد' : 'No views recorded yet'}</p>
+                    <p className="text-[10px] text-white/40">
+                      {language === 'ar' ? 'ستظهر هنا حسابات المستخدمين الذين شاهدوا قصتك' : 'Users who view your story will appear here'}
+                    </p>
+                  </div>
+                ) : (
+                  storyViewers.map((viewer) => (
+                    <div key={viewer.viewerId} className="flex items-center justify-between p-2 rounded-xl bg-white/5 border border-white/5">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-full overflow-hidden border border-white/20 shrink-0">
+                          <UserAvatar
+                            src={viewer.userPhotoURL}
+                            username={viewer.username}
+                            iconSize={14}
+                          />
+                        </div>
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-xs font-bold text-white truncate">
+                            {viewer.username || 'user'}
+                          </span>
+                          <span className="text-[10px] text-white/50">
+                            {viewer.viewedAt?.toDate
+                              ? formatDistanceToNow(viewer.viewedAt.toDate(), { addSuffix: true, locale: language === 'ar' ? ar : undefined })
+                              : (language === 'ar' ? 'شوهد مؤخراً' : 'viewed recently')}
+                          </span>
+                        </div>
+                      </div>
+                      <Eye size={14} className="text-blue-400" />
+                    </div>
+                  ))
+                )
+              )}
+
+              {/* Tab Contents: Reactions List */}
+              {viewersSheetTab === 'reactions' && (
+                storyReactions.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-white/50 space-y-1">
+                    <Heart size={24} className="mx-auto text-white/30 mb-2" />
+                    <p>{language === 'ar' ? 'لا توجد تفاعلات بعد' : 'No reactions yet'}</p>
+                  </div>
+                ) : (
+                  storyReactions.map((entry) => (
+                    <div key={entry.userId} className="flex items-center justify-between p-2 rounded-xl bg-white/5 border border-white/5">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-full overflow-hidden border border-white/20 shrink-0">
+                          <UserAvatar
+                            src={entry.userPhotoURL}
+                            username={entry.username}
+                            iconSize={14}
+                          />
+                        </div>
+                        <span className="text-xs font-bold text-white truncate">
+                          {entry.username || 'user'}
+                        </span>
+                      </div>
+                      <span className="text-xl">{REACTION_MAP[entry.reaction].emoji}</span>
+                    </div>
+                  ))
+                )
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
