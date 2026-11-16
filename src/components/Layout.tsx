@@ -23,7 +23,6 @@ export default function Layout({
         currentView={currentView}
         setView={setView}
         onOpenProfile={onOpenProfile}
-        onOpenInstall={onOpenInstall}
       />
       <Navigation
         currentView={currentView}
