@@ -1882,7 +1882,7 @@ export default function LiveView({
       <div className="max-w-6xl mx-auto pb-8 animate-in fade-in">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
           {/* Video Stage (Single Full-Screen OR Split-Screen Dual Pane) */}
-          <div className="lg:col-span-7 xl:col-span-8 relative bg-black rounded-3xl overflow-hidden min-h-[550px] lg:h-[calc(100vh-130px)] flex flex-col justify-between border border-slate-800 shadow-2xl">
+          <div className="lg:col-span-7 xl:col-span-8 relative bg-black rounded-2xl sm:rounded-3xl overflow-hidden min-h-[520px] lg:h-[calc(100dvh-130px)] flex flex-col justify-between border border-slate-800 shadow-2xl">
             {/* MEDIA SURFACE */}
             {isSplitScreen ? (
               <div className="absolute inset-0 grid grid-cols-1 grid-rows-2 sm:grid-cols-2 sm:grid-rows-1 gap-1.5 p-1.5 bg-slate-950">
@@ -2562,7 +2562,7 @@ export default function LiveView({
           </div>
 
           {/* Live Chat Panel */}
-          <div className="lg:col-span-5 xl:col-span-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl flex flex-col h-[420px] lg:h-[calc(100vh-130px)] overflow-hidden">
+          <div className="lg:col-span-5 xl:col-span-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl sm:rounded-3xl flex flex-col h-[420px] lg:h-[calc(100dvh-130px)] overflow-hidden">
             <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <MessageCircle size={18} className="text-rose-500" />
@@ -2687,7 +2687,7 @@ export default function LiveView({
             onClick={() => setShowInviteModal(false)}
           >
             <div
-              className="w-full sm:max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-h-[80vh] flex flex-col overflow-hidden"
+              className="w-full sm:max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-h-[80dvh] pb-safe sm:pb-0 flex flex-col overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
@@ -2914,7 +2914,7 @@ export default function LiveView({
             onClick={() => setShowViewersModal(false)}
           >
             <div
-              className="w-full sm:max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-h-[70vh] flex flex-col overflow-hidden"
+              className="w-full sm:max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl max-h-[70dvh] pb-safe sm:pb-0 flex flex-col overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">

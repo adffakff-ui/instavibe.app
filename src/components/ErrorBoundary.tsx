@@ -57,7 +57,7 @@ export default class ErrorBoundary extends React.Component<
     return (
       <div
         dir={isAr ? 'rtl' : 'ltr'}
-        className="min-h-screen bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-6"
+        className="min-h-[100dvh] pt-safe pb-safe bg-slate-50 dark:bg-slate-950 flex items-center justify-center p-6"
       >
         <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-7 shadow-xl text-center space-y-5">
           <div className="w-14 h-14 rounded-2xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">

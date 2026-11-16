@@ -22,7 +22,9 @@ import {
   Bookmark,
   Share2,
   Check,
+  Flag,
 } from 'lucide-react';
+import ReportModal from './ReportModal';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
@@ -45,6 +47,7 @@ interface ReelCardProps {
   onOpenProfile: (uid: string) => void;
   onOpenChat: (convId: string) => void;
   onOpenComments: (reel: any) => void;
+  onReportReel?: (reel: any) => void;
 }
 
 function ReelCard({
@@ -54,6 +57,7 @@ function ReelCard({
   onOpenProfile,
   onOpenChat,
   onOpenComments,
+  onReportReel,
 }: ReelCardProps) {
   const { user, profile, isFirebaseAuthenticated, language, t } = useAuth();
   const {
@@ -468,17 +472,31 @@ function ReelCard({
           </button>
 
           {!isOwn && (
-            <button
-              type="button"
-              onClick={handleMessage}
-              className="flex flex-col items-center gap-1 min-w-[44px]"
-              aria-label={t('message')}
-              title={t('message')}
-            >
-              <div className="w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 backdrop-blur-md flex items-center justify-center border border-white/10 active:scale-90 transition-transform">
-                <Send size={20} />
-              </div>
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={handleMessage}
+                className="flex flex-col items-center gap-1 min-w-[44px]"
+                aria-label={t('message')}
+                title={t('message')}
+              >
+                <div className="w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 backdrop-blur-md flex items-center justify-center border border-white/10 active:scale-90 transition-transform">
+                  <Send size={20} />
+                </div>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => onReportReel?.(reel)}
+                className="flex flex-col items-center gap-1 min-w-[44px]"
+                aria-label={language === 'ar' ? 'إبلاغ عن المقطع' : 'Report Reel'}
+                title={language === 'ar' ? 'إبلاغ عن المقطع' : 'Report Reel'}
+              >
+                <div className="w-11 h-11 rounded-full bg-black/45 hover:bg-black/65 backdrop-blur-md flex items-center justify-center border border-white/10 active:scale-90 transition-transform text-white/90 hover:text-amber-400">
+                  <Flag size={19} />
+                </div>
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -500,6 +518,7 @@ export default function ReelsView({
   const [loading, setLoading] = useState(true);
   const [isMuted, setIsMuted] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [reportTargetReel, setReportTargetReel] = useState<any | null>(null);
 
   // Active reel comments drawer state
   const [activeCommentsReel, setActiveCommentsReel] = useState<any | null>(null);
@@ -620,7 +639,7 @@ export default function ReelsView({
       <div className="relative max-w-md mx-auto">
         <div
           ref={feedContainerRef}
-          className="h-[calc(100vh-210px)] md:h-[calc(100vh-175px)] min-h-[460px] w-full overflow-y-auto snap-y snap-mandatory no-scrollbar rounded-3xl space-y-4 shadow-xl bg-black"
+          className="h-[calc(100dvh-11.5rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] md:h-[calc(100dvh-10.5rem)] min-h-[460px] w-full overflow-y-auto snap-y snap-mandatory no-scrollbar rounded-2xl sm:rounded-3xl space-y-4 shadow-xl bg-black"
         >
           {reels.length === 0 ? (
             <div className="w-full h-full flex flex-col items-center justify-center text-center px-6 space-y-4 bg-gradient-to-b from-slate-900 to-black text-white">
@@ -656,6 +675,7 @@ export default function ReelsView({
                 onOpenProfile={onOpenProfile}
                 onOpenChat={onOpenChat}
                 onOpenComments={(r) => setActiveCommentsReel(r)}
+                onReportReel={(r) => setReportTargetReel(r)}
               />
             ))
           )}
@@ -691,7 +711,7 @@ export default function ReelsView({
           onClick={() => setActiveCommentsReel(null)}
         >
           <div
-            className="w-full sm:max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden max-h-[75vh] flex flex-col"
+            className="w-full sm:max-w-md bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden max-h-[75dvh] pb-safe sm:pb-0 flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 dark:border-slate-800">
@@ -771,6 +791,21 @@ export default function ReelsView({
           </div>
         </div>
       )}
+
+      {/* Reel Moderation Report Modal */}
+      <ReportModal
+        isOpen={reportTargetReel !== null}
+        onClose={() => setReportTargetReel(null)}
+        target={reportTargetReel ? {
+          type: 'post',
+          id: reportTargetReel.id,
+          authorId: reportTargetReel.authorId,
+          username: reportTargetReel.authorUsername,
+          photoURL: reportTargetReel.authorPhotoURL,
+          mediaURL: reportTargetReel.mediaURL,
+          summary: reportTargetReel.caption,
+        } : null}
+      />
     </div>
   );
 }

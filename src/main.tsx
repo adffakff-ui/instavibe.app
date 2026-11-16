@@ -24,51 +24,49 @@ root.render(
 );
 
 function setupServiceWorker() {
-  if (import.meta.env.PROD) {
-    try {
-      const updateSW = registerSW({
-        immediate: true,
-        onNeedRefresh() {
-          (window as any).__instavibeUpdateAvailable = true;
-          (window as any).__instavibeApplyUpdate = () => updateSW(true);
-          window.dispatchEvent(new CustomEvent('instavibe:sw-update-ready'));
-        },
-        onRegisteredSW(_swUrl, registration) {
-          if (!registration) return;
-          (window as any).__instavibeSwRegistration = registration;
-          // Clean up any legacy /sw.js worker so only pwa-sw.js controls offline caching
-          navigator.serviceWorker.getRegistrations().then((regs) => {
-            regs.forEach((reg) => {
-              const scriptUrl = reg.active?.scriptURL || reg.installing?.scriptURL || reg.waiting?.scriptURL || '';
-              if (scriptUrl.endsWith('/sw.js') && reg !== registration) {
-                reg.unregister().catch(() => {});
-              }
-            });
-          }).catch(() => {});
-          // Check for new versions periodically and when returning to the app
-          window.setInterval(() => {
-            registration.update().catch(() => {});
-          }, 30 * 60 * 1000);
-          document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') {
-              registration.update().catch(() => {});
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    const updateSW = registerSW({
+      immediate: true,
+      onNeedRefresh() {
+        (window as any).__instavibeUpdateAvailable = true;
+        (window as any).__instavibeApplyUpdate = () => updateSW(true);
+        window.dispatchEvent(new CustomEvent('instavibe:sw-update-ready'));
+      },
+      onRegisteredSW(_swUrl, registration) {
+        if (!registration) return;
+        (window as any).__instavibeSwRegistration = registration;
+        window.dispatchEvent(new CustomEvent('instavibe:sw-registered'));
+        // Clean up any legacy /sw.js worker so only the active VitePWA worker controls scope
+        navigator.serviceWorker.getRegistrations().then((regs) => {
+          regs.forEach((reg) => {
+            const scriptUrl = reg.active?.scriptURL || reg.installing?.scriptURL || reg.waiting?.scriptURL || '';
+            if (scriptUrl.endsWith('/sw.js') && reg !== registration) {
+              reg.unregister().catch(() => {});
             }
           });
-        },
-        onRegisterError(error) {
-          // PWA support is optional; a registration failure must not prevent app startup.
-          console.warn('Service worker registration notice:', error);
-        },
-      });
-      (window as any).__instavibeApplyUpdate = () => updateSW(true);
-    } catch (error) {
-      console.warn('PWA setup notice:', error);
-    }
+        }).catch(() => {});
+        // Check for new versions periodically and when returning to the app
+        window.setInterval(() => {
+          registration.update().catch(() => {});
+        }, 30 * 60 * 1000);
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') {
+            registration.update().catch(() => {});
+          }
+        });
+      },
+      onRegisterError(error) {
+        // PWA support is optional; a registration failure must not prevent app startup.
+        console.warn('Service worker registration notice:', error);
+      },
+    });
+    (window as any).__instavibeApplyUpdate = () => updateSW(true);
+  } catch (error) {
+    console.warn('PWA setup notice:', error);
   }
 }
 
 // Render the app first. Service worker registration is non-critical and runs after first paint.
-if (import.meta.env.PROD) {
-  const schedule = window.requestIdleCallback ?? ((callback: IdleRequestCallback) => window.setTimeout(callback, 0));
-  schedule(() => setupServiceWorker());
-}
+const schedule = window.requestIdleCallback ?? ((callback: IdleRequestCallback) => window.setTimeout(callback, 0));
+schedule(() => setupServiceWorker());

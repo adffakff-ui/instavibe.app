@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Home, Search, Heart, User, LogOut, MessageSquare, Clapperboard, BarChart3, Globe, Smartphone } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { usePWAInstall } from '../hooks/usePWAInstall';
+import { APP_VERSION_LABEL } from '../lib/version';
 import { query, collection, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import UserAvatar from './UserAvatar';
@@ -16,7 +17,7 @@ export default function Navigation({
   onOpenInstall?: () => void;
 }) {
   const { user, profile, isFirebaseAuthenticated, logOut, language, setLanguage, t } = useAuth();
-  const { isInstalled } = usePWAInstall();
+  const { isInstalled, isInstallable } = usePWAInstall();
   const [hasUnread, setHasUnread] = useState(false);
 
   useEffect(() => {
@@ -62,8 +63,8 @@ export default function Navigation({
   return (
     <>
       {/* Mobile Bottom Nav */}
-      <nav className="fixed bottom-0 inset-x-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 md:hidden">
-        <div className="grid grid-cols-5 items-center h-16 pb-safe px-1">
+      <nav className="fixed bottom-0 inset-x-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 pb-safe md:hidden">
+        <div className="grid grid-cols-5 items-center h-16 px-1">
           {mobileNavItems.map((item) => {
             const isActive = currentView === item.view;
             return (
@@ -177,15 +178,25 @@ export default function Navigation({
             <button
               type="button"
               onClick={onOpenInstall}
-              className="flex items-center gap-3.5 p-3.5 rounded-xl bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 transition-colors group mt-auto font-bold whitespace-nowrap border border-purple-200/70 dark:border-purple-800/60"
+              className={`flex items-center gap-3.5 p-3.5 rounded-xl transition-colors group mt-auto font-bold whitespace-nowrap border ${
+                isInstallable
+                  ? 'bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 border-emerald-200/80 dark:border-emerald-800/70'
+                  : 'bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/50 text-purple-700 dark:text-purple-300 border-purple-200/70 dark:border-purple-800/60'
+              }`}
             >
-              <Smartphone size={22} className="shrink-0 text-purple-600 dark:text-purple-400" />
+              <Smartphone size={22} className={`shrink-0 ${isInstallable ? 'text-emerald-600 dark:text-emerald-400' : 'text-purple-600 dark:text-purple-400'}`} />
               <div className="hidden lg:flex items-center justify-between gap-2 flex-1 min-w-0">
                 <span className="text-sm truncate">
-                  {language === 'ar' ? 'تثبيت التطبيق' : 'Install App'}
+                  {isInstallable
+                    ? language === 'ar'
+                      ? 'تثبيت التطبيق الآن'
+                      : 'Install App Now'
+                    : language === 'ar'
+                    ? 'تثبيت التطبيق'
+                    : 'Install App'}
                 </span>
-                <span className="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-purple-600/15 text-purple-700 dark:text-purple-300 tabular-nums">
-                  v2.1.0
+                <span className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded tabular-nums ${isInstallable ? 'bg-emerald-600/15 text-emerald-700 dark:text-emerald-300' : 'bg-purple-600/15 text-purple-700 dark:text-purple-300'}`}>
+                  {APP_VERSION_LABEL}
                 </span>
               </div>
             </button>

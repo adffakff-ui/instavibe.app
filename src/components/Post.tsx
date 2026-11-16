@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { MessageCircle, Send, Bookmark, MoreHorizontal, ChevronDown, ChevronUp, Volume2, VolumeX, Play, Trash2, Share2, Ban, User as UserIcon, Check } from 'lucide-react';
+import { MessageCircle, Send, Bookmark, MoreHorizontal, ChevronDown, ChevronUp, Volume2, VolumeX, Play, Trash2, Share2, Ban, User as UserIcon, Check, Flag, Eye } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import { collection, query, orderBy, onSnapshot, doc, getDoc, where } from 'firebase/firestore';
@@ -15,6 +15,7 @@ import {
 } from './ReactionBar';
 import PostLikesModal, { PostLiker, RecentLikesStrip } from './PostLikesModal';
 import ActionConfirmationModal from './ActionConfirmationModal';
+import ReportModal from './ReportModal';
 import UserAvatar from './UserAvatar';
 import FollowButton from './FollowButton';
 import { REACTION_MAP, ReactionType, normalizeReaction } from '../utils/reactions';
@@ -55,6 +56,7 @@ export default function Post({
 
   const [activeReaction, setActiveReaction] = useState<ReactionType | null>(null);
   const [postLikesCount, setPostLikesCount] = useState<number>(post.likesCount || 0);
+  const [viewsCount, setViewsCount] = useState<number>(post.viewsCount || 0);
   const [reactionCounts, setReactionCounts] = useState<Record<string, number>>(post.reactionCounts || {});
   const [recentLikes, setRecentLikes] = useState<PostLiker[]>([]);
   const [loadingRecentLikes, setLoadingRecentLikes] = useState(false);
@@ -69,6 +71,7 @@ export default function Post({
   const [isSaved, setIsSaved] = useState(false);
   const [savingBookmark, setSavingBookmark] = useState(false);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'block' | 'delete' | null>(null);
   const [actionProcessing, setActionProcessing] = useState(false);
   const [actionToast, setActionToast] = useState<string | null>(null);
@@ -95,10 +98,13 @@ export default function Post({
     if (typeof post.likesCount === 'number') {
       setPostLikesCount(post.likesCount);
     }
+    if (typeof post.viewsCount === 'number') {
+      setViewsCount(post.viewsCount);
+    }
     if (post.reactionCounts && typeof post.reactionCounts === 'object') {
       setReactionCounts(post.reactionCounts);
     }
-  }, [post.likesCount, post.reactionCounts]);
+  }, [post.likesCount, post.viewsCount, post.reactionCounts]);
 
   // Cleanup tap timer on unmount
   useEffect(() => {
@@ -694,17 +700,31 @@ export default function Post({
               )}
 
               {!isOwnPost && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowOptionsMenu(false);
-                    setConfirmAction('block');
-                  }}
-                  className="w-full px-3.5 py-2.5 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 flex items-center gap-2.5 text-start transition-colors"
-                >
-                  <Ban size={15} className="shrink-0" />
-                  <span>{language === 'ar' ? 'حظر المستخدم' : 'Block User'}</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowOptionsMenu(false);
+                      setShowReportModal(true);
+                    }}
+                    className="w-full px-3.5 py-2.5 text-xs font-semibold text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 flex items-center gap-2.5 text-start transition-colors"
+                  >
+                    <Flag size={15} className="shrink-0" />
+                    <span>{language === 'ar' ? 'إبلاغ عن المنشور' : 'Report Post'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowOptionsMenu(false);
+                      setConfirmAction('block');
+                    }}
+                    className="w-full px-3.5 py-2.5 text-xs font-bold text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 flex items-center gap-2.5 text-start transition-colors"
+                  >
+                    <Ban size={15} className="shrink-0" />
+                    <span>{language === 'ar' ? 'حظر المستخدم' : 'Block User'}</span>
+                  </button>
+                </>
               )}
             </div>
           )}
@@ -953,9 +973,15 @@ export default function Post({
           </div>
         )}
 
-        {/* Timestamp */}
-        <div className="text-[10px] uppercase text-slate-400 dark:text-slate-500 tracking-wider font-semibold">
-          {formattedDate}
+        {/* Timestamp & View Count */}
+        <div className="flex items-center justify-between text-[11px] text-slate-400 dark:text-slate-500 font-semibold pt-1">
+          <div className="flex items-center gap-1.5 tabular-nums">
+            <Eye size={13} className="text-slate-400 shrink-0" />
+            <span>{viewsCount} {language === 'ar' ? 'مشاهدة' : viewsCount === 1 ? 'view' : 'views'}</span>
+          </div>
+          <div className="uppercase tracking-wider">
+            {formattedDate}
+          </div>
         </div>
       </div>
 
@@ -1006,6 +1032,28 @@ export default function Post({
             : undefined
         }
         isProcessing={actionProcessing}
+      />
+
+      {/* Content Moderation Report Modal */}
+      <ReportModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        target={{
+          type: 'post',
+          id: post.id,
+          authorId: post.authorId,
+          username: post.authorUsername,
+          photoURL: post.authorPhotoURL,
+          mediaURL: post.mediaURL,
+          summary: post.caption,
+        }}
+        onReportSubmitted={() => {
+          triggerToast(
+            language === 'ar'
+              ? 'تم استلام بلاغك بنجاح'
+              : 'Report submitted successfully'
+          );
+        }}
       />
     </article>
   );

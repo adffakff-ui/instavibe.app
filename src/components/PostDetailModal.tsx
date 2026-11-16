@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { X } from 'lucide-react';
 import Post from './Post';
 import { useAuth } from '../context/AuthContext';
+import { useFirestore } from '../hooks/useFirestore';
 
 export default function PostDetailModal({
   post,
@@ -19,6 +20,12 @@ export default function PostDetailModal({
   onPostDeleted?: (postId: string) => void;
 }) {
   const { language } = useAuth();
+  const { recordPostView } = useFirestore();
+
+  useEffect(() => {
+    if (!post?.id) return;
+    recordPostView(post.id);
+  }, [post?.id]);
 
   useEffect(() => {
     if (!post) return;
@@ -40,7 +47,7 @@ export default function PostDetailModal({
       aria-label={language === 'ar' ? 'تفاصيل المنشور' : 'Post details'}
     >
       <div
-        className="w-full sm:max-w-xl max-h-[92vh] overflow-y-auto no-scrollbar rounded-t-3xl sm:rounded-3xl bg-white dark:bg-slate-950 shadow-2xl border border-slate-200 dark:border-slate-800 relative"
+        className="w-full sm:max-w-xl max-h-[92dvh] pb-safe sm:pb-0 overflow-y-auto no-scrollbar rounded-t-3xl sm:rounded-3xl bg-white dark:bg-slate-950 shadow-2xl border border-slate-200 dark:border-slate-800 relative"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 z-20 flex items-center justify-between px-4 py-3 bg-white/90 dark:bg-slate-950/90 backdrop-blur-md border-b border-slate-100 dark:border-slate-800">

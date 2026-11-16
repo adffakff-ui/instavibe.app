@@ -20,6 +20,7 @@
         "onboardingCompleted": { "type": "boolean", "description": "Whether initial profile setup is finished" },
         "lastLoginAt": { "type": "string", "format": "date-time", "description": "Timestamp of latest login" },
         "interests": { "type": "object", "description": "Map of tag names to interest scores" },
+        "storySettings": { "type": "object", "description": "Default story privacy, replies, archive, and sharing preferences" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "username", "email"]
@@ -67,6 +68,7 @@
         "likesCount": { "type": "number" },
         "reactionCounts": { "type": "object", "description": "Map of reaction type to count" },
         "commentsCount": { "type": "number" },
+        "viewsCount": { "type": "number", "description": "Number of views on the post" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["authorId", "mediaURL", "mediaType"]
@@ -85,6 +87,10 @@
         "caption": { "type": "string" },
         "likesCount": { "type": "number" },
         "reactionCounts": { "type": "object", "description": "Map of reaction type to count" },
+        "viewsCount": { "type": "number", "description": "Number of unique views on the story" },
+        "tapsForwardCount": { "type": "number", "description": "Number of forward navigation taps on the story" },
+        "tapsBackCount": { "type": "number", "description": "Number of backward navigation taps on the story" },
+        "repliesCount": { "type": "number", "description": "Number of replies received on the story" },
         "poll": { 
           "type": "object",
           "description": "Optional interactive poll sticker",
@@ -96,6 +102,85 @@
             "votesB": { "type": "number" },
             "voters": { "type": "object" }
           }
+        },
+        "music": {
+          "type": "object",
+          "description": "Optional soundtrack or music sticker attached to story",
+          "properties": {
+            "title": { "type": "string" },
+            "artist": { "type": "string" },
+            "genre": { "type": "string" }
+          }
+        },
+        "template": {
+          "type": "object",
+          "description": "Optional template sticker attached to story",
+          "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string" },
+            "prompt": { "type": "string" }
+          }
+        },
+        "collage": {
+          "type": "object",
+          "description": "Optional layout or collage configuration",
+          "properties": {
+            "count": { "type": "number" },
+            "style": { "type": "string" }
+          }
+        },
+        "audience": {
+          "type": "string",
+          "enum": ["everyone", "close_friends"],
+          "description": "Target audience for the story"
+        },
+        "closeFriendIds": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Bounded list of close friend UIDs allowed to see close_friends stories"
+        },
+        "allowReplies": {
+          "type": "boolean",
+          "description": "Whether replies and reactions are enabled on the story"
+        },
+        "allowComments": {
+          "type": "boolean",
+          "description": "Whether comments and replies are enabled on the story"
+        },
+        "aiLabel": {
+          "type": "boolean",
+          "description": "Whether the story carries an AI-generated content disclosure label"
+        },
+        "filterId": {
+          "type": "string",
+          "maxLength": 40,
+          "description": "Visual effect preset ID applied to the story"
+        },
+        "textOverlays": {
+          "type": "array",
+          "description": "Positioned text overlays on the story canvas"
+        },
+        "stickers": {
+          "type": "array",
+          "description": "Positioned stickers (emoji, location, time, mood) on the story canvas"
+        },
+        "mentions": {
+          "type": "array",
+          "description": "User mentions tagged on the story"
+        },
+        "partnership": {
+          "type": "object",
+          "description": "Optional paid partnership or collaboration tag",
+          "properties": {
+            "isPaid": { "type": "boolean" },
+            "allowAds": { "type": "boolean" },
+            "partnerId": { "type": "string" },
+            "partnerUsername": { "type": "string" }
+          }
+        },
+        "promoted": {
+          "type": "object",
+          "description": "Optional story promotion/boost configuration"
         },
         "createdAt": { "type": "string", "format": "date-time" },
         "expiresAt": { "type": "string", "format": "date-time" }
@@ -199,17 +284,24 @@
     },
     "Notification": {
       "title": "Notification",
-      "description": "An in-app notification for likes, follows, or messages",
+      "description": "An in-app notification for likes, follows, messages, or silent story expiration notices",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "recipientId": { "type": "string" },
         "senderId": { "type": "string" },
-        "senderUsername": { "type": "string" },
-        "senderPhotoURL": { "type": "string" },
-        "type": { "type": "string", "enum": ["like", "follow", "message", "comment"] },
+        "senderUsername": { "type": "string", "maxLength": 50 },
+        "senderPhotoURL": { "type": "string", "maxLength": 900000 },
+        "type": { "type": "string", "enum": ["like", "follow", "message", "comment", "story_expiring"] },
         "postId": { "type": "string" },
-        "text": { "type": "string" },
+        "storyId": { "type": "string" },
+        "storyMediaURL": { "type": "string", "maxLength": 900000 },
+        "storyMediaType": { "type": "string", "enum": ["image", "video"] },
+        "expiresAt": { "type": "string", "format": "date-time", "maxLength": 64 },
+        "silent": { "type": "boolean" },
+        "actionTaken": { "type": "string", "enum": ["kept", "deleted"] },
+        "handledAt": { "type": "string", "format": "date-time" },
+        "text": { "type": "string", "maxLength": 1000 },
         "read": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
@@ -225,6 +317,19 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["blockerId", "blockedId"]
+    },
+    "CloseFriend": {
+      "title": "CloseFriend",
+      "description": "User close friends list entry for private Close Friends stories",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "friendId": { "type": "string" },
+        "username": { "type": "string", "maxLength": 50 },
+        "photoURL": { "type": "string", "maxLength": 900000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "friendId", "createdAt"]
     },
     "HighlightAlbum": {
       "title": "HighlightAlbum",
@@ -357,6 +462,27 @@
         "savedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "postId", "mediaURL", "mediaType"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "Content moderation report submitted by a user for a post or profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "reporterId": { "type": "string", "description": "UID of user submitting the report" },
+        "reporterUsername": { "type": "string", "maxLength": 50 },
+        "targetType": { "type": "string", "enum": ["post", "profile"] },
+        "targetId": { "type": "string", "description": "ID of reported post or UID of reported profile" },
+        "targetAuthorId": { "type": "string", "description": "UID of author of post or profile owner" },
+        "targetUsername": { "type": "string", "maxLength": 50 },
+        "targetSummary": { "type": "string", "maxLength": 500, "description": "Summary or caption of reported item" },
+        "reason": { "type": "string", "enum": ["spam", "harassment", "inappropriate", "hate_speech", "misinformation", "impersonation", "violence", "copyright", "other"] },
+        "reasonLabel": { "type": "string", "maxLength": 100 },
+        "details": { "type": "string", "maxLength": 1000 },
+        "status": { "type": "string", "enum": ["pending", "reviewed", "resolved", "dismissed"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["reporterId", "targetType", "targetId", "reason", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -399,6 +525,10 @@
     "/users/{userId}/highlights/{albumId}": {
       "schema": "HighlightAlbum",
       "description": "User story highlight albums"
+    },
+    "/users/{userId}/closeFriends/{friendId}": {
+      "schema": "CloseFriend",
+      "description": "User close friends list"
     },
     "/conversations/{conversationId}": {
       "schema": "Conversation",
@@ -451,6 +581,10 @@
     "/users/{userId}/loginSessions/{sessionId}": {
       "schema": "LoginSession",
       "description": "Active and revoked login sessions for a user"
+    },
+    "/reports/{reportId}": {
+      "schema": "Report",
+      "description": "User submitted reports for content moderation"
     }
   }
 }

@@ -34,7 +34,7 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'username', 'email'])
-        && data.keys().hasOnly(['uid', 'username', 'usernameLower', 'fullName', 'bio', 'website', 'photoURL', 'coverPhotoURL', 'email', 'phoneNumber', 'emailVerified', 'authProvider', 'onboardingCompleted', 'lastLoginAt', 'interests', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'username', 'usernameLower', 'fullName', 'bio', 'website', 'photoURL', 'coverPhotoURL', 'email', 'phoneNumber', 'emailVerified', 'authProvider', 'onboardingCompleted', 'lastLoginAt', 'interests', 'storySettings', 'createdAt'])
         && data.uid == request.auth.uid
         && data.username is string && data.username.size() >= 3 && data.username.size() <= 30
         && data.email is string && data.email.size() <= 320
@@ -47,7 +47,8 @@ service cloud.firestore {
         && (!('coverPhotoURL' in data) || data.coverPhotoURL == null || (data.coverPhotoURL is string && data.coverPhotoURL.size() <= 900000))
         && (!('emailVerified' in data) || data.emailVerified is bool)
         && (!('authProvider' in data) || data.authProvider in ['google', 'password', 'phone'])
-        && (!('onboardingCompleted' in data) || data.onboardingCompleted is bool);
+        && (!('onboardingCompleted' in data) || data.onboardingCompleted is bool)
+        && (!('storySettings' in data) || data.storySettings == null || data.storySettings is map);
     }
 
     function isValidUsernameReservation(data) {
@@ -71,18 +72,26 @@ service cloud.firestore {
 
     function isValidPost(data) {
       return data.keys().hasAll(['authorId', 'mediaURL', 'mediaType'])
-        && data.keys().hasOnly(['id', 'authorId', 'authorUsername', 'authorPhotoURL', 'mediaURL', 'mediaType', 'caption', 'tags', 'likesCount', 'reactionCounts', 'commentsCount', 'createdAt'])
+        && data.keys().hasOnly(['id', 'authorId', 'authorUsername', 'authorPhotoURL', 'mediaURL', 'mediaType', 'caption', 'tags', 'likesCount', 'reactionCounts', 'commentsCount', 'viewsCount', 'createdAt'])
         && data.authorId == request.auth.uid
         && data.mediaURL is string && data.mediaURL.size() >= 1 && data.mediaURL.size() <= 900000
         && data.mediaType in ['image', 'video']
         && (!('caption' in data) || data.caption == null || (data.caption is string && data.caption.size() <= 2200))
         && (!('tags' in data) || (data.tags is list && data.tags.size() <= 30 && (data.tags.size() == 0 || data.tags[0] is string)))
+        && (!('viewsCount' in data) || data.viewsCount == null || (data.viewsCount is number && data.viewsCount >= 0))
         && (!('reactionCounts' in data) || data.reactionCounts == null || data.reactionCounts is map);
     }
 
     function isValidStory(data) {
       return data.keys().hasAll(['authorId', 'mediaURL'])
-        && data.keys().hasOnly(['id', 'authorId', 'authorUsername', 'authorPhotoURL', 'mediaURL', 'mediaType', 'caption', 'likesCount', 'reactionCounts', 'viewsCount', 'poll', 'createdAt', 'expiresAt'])
+        && data.keys().hasOnly([
+          'id', 'authorId', 'authorUsername', 'authorPhotoURL', 'mediaURL', 'mediaType', 'caption',
+          'likesCount', 'reactionCounts', 'viewsCount', 'tapsForwardCount', 'tapsBackCount', 'repliesCount',
+          'poll', 'music', 'template', 'collage',
+          'audience', 'closeFriendIds', 'allowReplies', 'allowComments', 'aiLabel', 'promoted',
+          'filterId', 'textOverlays', 'stickers', 'mentions', 'partnership',
+          'createdAt', 'expiresAt'
+        ])
         && data.authorId == request.auth.uid
         && data.mediaURL is string && data.mediaURL.size() <= 900000
         && (!('mediaType' in data) || data.mediaType == null || data.mediaType in ['image', 'video'])
@@ -90,7 +99,24 @@ service cloud.firestore {
         && (!('likesCount' in data) || data.likesCount == null || (data.likesCount is number && data.likesCount >= 0))
         && (!('reactionCounts' in data) || data.reactionCounts == null || data.reactionCounts is map)
         && (!('viewsCount' in data) || data.viewsCount == null || (data.viewsCount is number && data.viewsCount >= 0))
+        && (!('tapsForwardCount' in data) || data.tapsForwardCount == null || (data.tapsForwardCount is number && data.tapsForwardCount >= 0))
+        && (!('tapsBackCount' in data) || data.tapsBackCount == null || (data.tapsBackCount is number && data.tapsBackCount >= 0))
+        && (!('repliesCount' in data) || data.repliesCount == null || (data.repliesCount is number && data.repliesCount >= 0))
         && (!('poll' in data) || data.poll == null || (data.poll is map))
+        && (!('music' in data) || data.music == null || (data.music is map))
+        && (!('template' in data) || data.template == null || (data.template is map))
+        && (!('collage' in data) || data.collage == null || (data.collage is map))
+        && (!('audience' in data) || data.audience == null || data.audience in ['everyone', 'close_friends'])
+        && (!('closeFriendIds' in data) || data.closeFriendIds == null || (data.closeFriendIds is list && data.closeFriendIds.size() <= 200 && (data.closeFriendIds.size() == 0 || data.closeFriendIds[0] is string)))
+        && (!('allowReplies' in data) || data.allowReplies == null || data.allowReplies is bool)
+        && (!('allowComments' in data) || data.allowComments == null || data.allowComments is bool)
+        && (!('aiLabel' in data) || data.aiLabel == null || data.aiLabel is bool)
+        && (!('promoted' in data) || data.promoted == null || data.promoted is map)
+        && (!('filterId' in data) || data.filterId == null || (data.filterId is string && data.filterId.size() <= 40))
+        && (!('textOverlays' in data) || data.textOverlays == null || (data.textOverlays is list && data.textOverlays.size() <= 20 && (data.textOverlays.size() == 0 || data.textOverlays[0] is map)))
+        && (!('stickers' in data) || data.stickers == null || (data.stickers is list && data.stickers.size() <= 20 && (data.stickers.size() == 0 || data.stickers[0] is map)))
+        && (!('mentions' in data) || data.mentions == null || (data.mentions is list && data.mentions.size() <= 20 && (data.mentions.size() == 0 || data.mentions[0] is map)))
+        && (!('partnership' in data) || data.partnership == null || data.partnership is map)
         && (!('expiresAt' in data) || data.expiresAt == null || (data.expiresAt is string && data.expiresAt.size() <= 64));
     }
 
@@ -130,6 +156,7 @@ service cloud.firestore {
     function isValidPostStatsUpdate(data) {
       return (!('likesCount' in data) || (data.likesCount is number && data.likesCount >= 0))
         && (!('commentsCount' in data) || (data.commentsCount is number && data.commentsCount >= 0))
+        && (!('viewsCount' in data) || (data.viewsCount is number && data.viewsCount >= 0))
         && (!('reactionCounts' in data) || data.reactionCounts == null || (data.reactionCounts is map && data.reactionCounts.size() <= 10));
     }
 
@@ -146,7 +173,10 @@ service cloud.firestore {
       return (!('likesCount' in data) || data.likesCount == null || (data.likesCount is number && data.likesCount >= 0))
         && (!('reactionCounts' in data) || data.reactionCounts == null || (data.reactionCounts is map && data.reactionCounts.size() <= 10))
         && (!('poll' in data) || data.poll == null || data.poll is map)
-        && (!('viewsCount' in data) || data.viewsCount == null || (data.viewsCount is number && data.viewsCount >= 0));
+        && (!('viewsCount' in data) || data.viewsCount == null || (data.viewsCount is number && data.viewsCount >= 0))
+        && (!('tapsForwardCount' in data) || data.tapsForwardCount == null || (data.tapsForwardCount is number && data.tapsForwardCount >= 0))
+        && (!('tapsBackCount' in data) || data.tapsBackCount == null || (data.tapsBackCount is number && data.tapsBackCount >= 0))
+        && (!('repliesCount' in data) || data.repliesCount == null || (data.repliesCount is number && data.repliesCount >= 0));
     }
 
     function isValidHighlight(data) {
@@ -156,6 +186,15 @@ service cloud.firestore {
         && data.title is string && data.title.size() <= 50
         && (!('coverImageURL' in data) || data.coverImageURL == null || (data.coverImageURL is string && data.coverImageURL.size() <= 900000))
         && (!('storyIds' in data) || data.storyIds == null || (data.storyIds is list && data.storyIds.size() <= 30));
+    }
+
+    function isValidCloseFriend(data) {
+      return data.keys().hasAll(['userId', 'friendId', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'friendId', 'username', 'photoURL', 'createdAt'])
+        && data.userId == request.auth.uid
+        && isValidId(data.friendId)
+        && (!('username' in data) || data.username == null || (data.username is string && data.username.size() <= 50))
+        && (!('photoURL' in data) || data.photoURL == null || (data.photoURL is string && data.photoURL.size() <= 900000));
     }
 
     function isValidSavedPost(data) {
@@ -268,6 +307,45 @@ service cloud.firestore {
         && (!('mediaType' in data) || data.mediaType == null || data.mediaType in ['image', 'video']);
     }
 
+    function isValidReport(data) {
+      return data.keys().hasAll(['reporterId', 'targetType', 'targetId', 'reason', 'status', 'createdAt'])
+        && data.keys().hasOnly(['id', 'reporterId', 'reporterUsername', 'targetType', 'targetId', 'targetAuthorId', 'targetUsername', 'targetSummary', 'reason', 'reasonLabel', 'details', 'status', 'createdAt'])
+        && data.reporterId == request.auth.uid
+        && isValidId(data.targetId)
+        && data.targetType in ['post', 'profile']
+        && data.reason in ['spam', 'harassment', 'inappropriate', 'hate_speech', 'misinformation', 'impersonation', 'violence', 'copyright', 'other']
+        && data.status == 'pending'
+        && (!('reporterUsername' in data) || data.reporterUsername == null || (data.reporterUsername is string && data.reporterUsername.size() <= 50))
+        && (!('targetAuthorId' in data) || data.targetAuthorId == null || isValidId(data.targetAuthorId))
+        && (!('targetUsername' in data) || data.targetUsername == null || (data.targetUsername is string && data.targetUsername.size() <= 50))
+        && (!('targetSummary' in data) || data.targetSummary == null || (data.targetSummary is string && data.targetSummary.size() <= 500))
+        && (!('reasonLabel' in data) || data.reasonLabel == null || (data.reasonLabel is string && data.reasonLabel.size() <= 100))
+        && (!('details' in data) || data.details == null || (data.details is string && data.details.size() <= 1000));
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['recipientId', 'senderId', 'type'])
+        && data.keys().hasOnly([
+          'id', 'recipientId', 'senderId', 'senderUsername', 'senderPhotoURL',
+          'type', 'postId', 'storyId', 'storyMediaURL', 'storyMediaType',
+          'expiresAt', 'silent', 'actionTaken', 'handledAt', 'text', 'read', 'createdAt'
+        ])
+        && isValidId(data.recipientId)
+        && isValidId(data.senderId)
+        && data.type in ['like', 'follow', 'message', 'comment', 'story_expiring']
+        && (!('senderUsername' in data) || data.senderUsername == null || (data.senderUsername is string && data.senderUsername.size() <= 50))
+        && (!('senderPhotoURL' in data) || data.senderPhotoURL == null || (data.senderPhotoURL is string && data.senderPhotoURL.size() <= 900000))
+        && (!('postId' in data) || data.postId == null || isValidId(data.postId))
+        && (!('storyId' in data) || data.storyId == null || isValidId(data.storyId))
+        && (!('storyMediaURL' in data) || data.storyMediaURL == null || (data.storyMediaURL is string && data.storyMediaURL.size() <= 900000))
+        && (!('storyMediaType' in data) || data.storyMediaType == null || data.storyMediaType in ['image', 'video'])
+        && (!('expiresAt' in data) || data.expiresAt == null || (data.expiresAt is string && data.expiresAt.size() <= 64))
+        && (!('silent' in data) || data.silent == null || data.silent is bool)
+        && (!('actionTaken' in data) || data.actionTaken == null || data.actionTaken in ['kept', 'deleted'])
+        && (!('text' in data) || data.text == null || (data.text is string && data.text.size() <= 1000))
+        && (!('read' in data) || data.read is bool);
+    }
+
     // -------------------------------------------------------------------------
     // 3. Collection Rules
     // -------------------------------------------------------------------------
@@ -314,10 +392,11 @@ service cloud.firestore {
         allow update: if isSignedIn()
           && isOwner(userId)
           && isValidId(sessionId)
+          && resource != null
           && isValidLoginSession(incoming())
           && incoming().sessionId == existing().sessionId
           && incoming().userId == existing().userId
-          && incoming().createdAt == existing().createdAt
+          && (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt)
           && incoming().lastActiveAt == request.time
           && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'lastActiveAt', 'deviceLabel', 'platform']);
         allow delete: if isSignedIn() && isOwner(userId) && isValidId(sessionId);
@@ -336,6 +415,14 @@ service cloud.firestore {
         allow delete: if isSignedIn() && isOwner(userId);
       }
 
+      match /closeFriends/{friendId} {
+        allow get: if isSignedIn() && isOwner(userId) && isValidId(friendId);
+        allow list: if isSignedIn() && isOwner(userId) && resource.data.userId == request.auth.uid;
+        allow create: if isSignedIn() && isOwner(userId) && isValidId(friendId) && isValidCloseFriend(incoming()) && incoming().friendId == friendId && incoming().createdAt == request.time;
+        allow update: if isSignedIn() && isOwner(userId) && isValidId(friendId) && isValidCloseFriend(incoming()) && incoming().friendId == friendId && incoming().createdAt == existing().createdAt;
+        allow delete: if isSignedIn() && isOwner(userId) && isValidId(friendId);
+      }
+
       match /savedPosts/{postId} {
         allow get: if isSignedIn() && isOwner(userId) && isValidId(postId);
         allow list: if isSignedIn() && isOwner(userId) && resource.data.userId == request.auth.uid;
@@ -351,7 +438,7 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(postId) && isValidPost(incoming()) && incoming().createdAt == request.time;
       allow update: if isSignedIn() && isValidId(postId) && (
         (isOwner(existing().authorId) && isValidPost(incoming()) && incoming().createdAt == existing().createdAt)
-        || (isValidPostStatsUpdate(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount', 'reactionCounts']) && !isBlocked(existing().authorId, request.auth.uid))
+        || (isValidPostStatsUpdate(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'commentsCount', 'reactionCounts', 'viewsCount']) && !isBlocked(existing().authorId, request.auth.uid))
       );
       allow delete: if isSignedIn() && isValidId(postId) && isOwner(existing().authorId);
 
@@ -385,7 +472,7 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(storyId) && isValidStory(incoming()) && incoming().createdAt == request.time;
       allow update: if isSignedIn() && isValidId(storyId) && (
         (isOwner(existing().authorId) && isValidStory(incoming()) && incoming().createdAt == existing().createdAt)
-        || (isValidStoryStatsUpdate(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['poll', 'likesCount', 'reactionCounts', 'viewsCount']) && !isBlocked(existing().authorId, request.auth.uid))
+        || (isValidStoryStatsUpdate(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['poll', 'likesCount', 'reactionCounts', 'viewsCount', 'tapsForwardCount', 'tapsBackCount', 'repliesCount']) && !isBlocked(existing().authorId, request.auth.uid))
       );
       allow delete: if isSignedIn() && isValidId(storyId) && isOwner(existing().authorId);
 
@@ -513,11 +600,15 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && isValidId(userId)
         && isValidId(notificationId)
+        && isValidNotification(incoming())
         && incoming().senderId == request.auth.uid
         && incoming().recipientId == userId
-        && incoming().type in ['like', 'follow', 'message', 'comment']
         && !isBlocked(userId, request.auth.uid);
-      allow update: if isSignedIn() && isOwner(userId) && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow update: if isSignedIn()
+        && isOwner(userId)
+        && isValidId(notificationId)
+        && isValidNotification(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['read', 'actionTaken', 'handledAt']);
       allow delete: if isSignedIn() && isOwner(userId);
     }
 
@@ -640,6 +731,16 @@ service cloud.firestore {
           && isValidId(requesterId)
           && (isOwner(requesterId) || isOwner(get(/databases/$(database)/documents/liveStreams/$(streamId)).data.hostId));
       }
+    }
+
+    match /reports/{reportId} {
+      allow get: if isSignedIn() && isValidId(reportId) && (resource == null || isOwner(resource.data.reporterId));
+      allow list: if isSignedIn() && resource.data.reporterId == request.auth.uid;
+      allow create: if isSignedIn()
+        && isValidId(reportId)
+        && isValidReport(incoming())
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
     }
   }
 }

@@ -108,7 +108,7 @@ export default function MessagesList({ onSelectConversation }: { onSelectConvers
         </div>
       </div>
 
-      <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-[calc(100vh-250px)] overflow-y-auto no-scrollbar">
+      <div className="divide-y divide-slate-100 dark:divide-slate-800 max-h-[calc(100dvh-15.5rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] overflow-y-auto no-scrollbar">
         {filteredConversations.length === 0 ? (
           <div className="p-10 text-center">
             <div className="w-16 h-16 bg-slate-50 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4">

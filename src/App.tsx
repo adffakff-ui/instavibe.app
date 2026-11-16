@@ -15,11 +15,13 @@ import LiveView from './components/LiveView';
 import { AppUpdateBanner, OfflineIndicator, PWAInstallModal } from './components/PWAInstallModal';
 import NotificationToast from './components/NotificationToast';
 import PostDetailModal from './components/PostDetailModal';
+import StoryCreation from './components/StoryCreation';
 import AuthPortal from './components/AuthPortal';
 import OnboardingView from './components/OnboardingView';
 import { usePWAInstall } from './hooks/usePWAInstall';
 import { useEffect, useState } from 'react';
 import { useBlockedConversationListener } from './hooks/useBlockedConversationListener';
+import { useStoryExpiryMonitor } from './hooks/useStoryExpiryMonitor';
 import { SpeedInsights } from '@vercel/speed-insights/react';
 
 function AppContent() {
@@ -30,7 +32,10 @@ function AppContent() {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [selectedHashtag, setSelectedHashtag] = useState<string>('all');
   const [showInstallModal, setShowInstallModal] = useState(false);
+  const [showGlobalStoryCreation, setShowGlobalStoryCreation] = useState(false);
   const [toastPost, setToastPost] = useState<any | null>(null);
+
+  useStoryExpiryMonitor();
 
   // Automatically clears any active selectedConversationId state if the blocked user is a participant
   useBlockedConversationListener({
@@ -44,12 +49,35 @@ function AppContent() {
     const handleOpenInstall = () => setShowInstallModal(true);
     window.addEventListener('instavibe:open-install', handleOpenInstall);
 
+    const handleSwitchView = (e: any) => {
+      if (e.detail) {
+        handleSetView(e.detail);
+      }
+    };
+    window.addEventListener('instavibe:switch-view', handleSwitchView);
+
+    const handleOpenProfileEvent = (e: any) => {
+      if (typeof e.detail === 'string' && e.detail.trim()) {
+        setSelectedProfileId(e.detail);
+        setView('profile');
+      }
+    };
+    window.addEventListener('instavibe:open-profile', handleOpenProfileEvent);
+
+    const handleOpenStoryCreation = () => {
+      setShowGlobalStoryCreation(true);
+    };
+    window.addEventListener('instavibe:open-story-creation', handleOpenStoryCreation);
+
     if (typeof window !== 'undefined' && window.location.search.includes('install=1') && !isInstalled) {
       setShowInstallModal(true);
     }
 
     return () => {
       window.removeEventListener('instavibe:open-install', handleOpenInstall);
+      window.removeEventListener('instavibe:switch-view', handleSwitchView);
+      window.removeEventListener('instavibe:open-profile', handleOpenProfileEvent);
+      window.removeEventListener('instavibe:open-story-creation', handleOpenStoryCreation);
     };
   }, [isInstalled]);
 
@@ -68,7 +96,7 @@ function AppContent() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-white dark:bg-slate-950">
+      <div className="flex items-center justify-center min-h-[100dvh] pt-safe pb-safe bg-white dark:bg-slate-950">
         <div className="w-12 h-12 border-4 border-slate-200 border-t-slate-900 dark:border-t-white rounded-full animate-spin"></div>
       </div>
     );
@@ -206,6 +234,9 @@ function AppContent() {
       <OfflineIndicator />
       <AppUpdateBanner />
       <PWAInstallModal isOpen={showInstallModal} onClose={() => setShowInstallModal(false)} />
+      {showGlobalStoryCreation && (
+        <StoryCreation onClose={() => setShowGlobalStoryCreation(false)} />
+      )}
     </>
   );
 }

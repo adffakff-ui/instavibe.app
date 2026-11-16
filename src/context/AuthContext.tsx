@@ -256,6 +256,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const applyTheme = () => {
       const isDark = theme === 'dark' || (theme === 'system' && mediaQuery.matches);
       document.documentElement.classList.toggle('dark', isDark);
+      const themeMeta = document.querySelector('meta[name="theme-color"]');
+      if (themeMeta) {
+        themeMeta.setAttribute('content', isDark ? '#020617' : '#ffffff');
+      }
     };
 
     applyTheme();
@@ -376,6 +380,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   const normalizedKey = normalizeUsernameKey(data.username);
 
                   const syncReturningUser = async () => {
+                    const sessionPromise = upsertLoginSession(
+                      firebaseUser.uid,
+                      sessionId,
+                      detectedProvider
+                    ).then(async (status) => {
+                      if (status === 'revoked') {
+                        rotateLocalSessionId();
+                        await signOut(auth).catch(() => {});
+                      }
+                    });
+
                     try {
                       await updateDoc(userRef, {
                         lastLoginAt: serverTimestamp(),
@@ -409,11 +424,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                       }
                     }
 
-                    const status = await upsertLoginSession(firebaseUser.uid, sessionId, detectedProvider);
-                    if (status === 'revoked') {
-                      rotateLocalSessionId();
-                      await signOut(auth).catch(() => {});
-                    }
+                    await sessionPromise;
                   };
                   syncReturningUser();
                 }

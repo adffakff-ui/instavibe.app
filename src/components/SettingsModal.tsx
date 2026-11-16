@@ -644,7 +644,7 @@ export default function SettingsModal({
       aria-label={language === 'ar' ? 'الإعدادات' : 'Settings'}
     >
       <div
-        className="w-full sm:max-w-lg bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden max-h-[90vh] flex flex-col"
+        className="w-full sm:max-w-lg bg-white dark:bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden max-h-[90dvh] pb-safe sm:pb-0 flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Mobile Sheet Grabber */}

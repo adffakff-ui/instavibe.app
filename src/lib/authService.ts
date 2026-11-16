@@ -425,6 +425,20 @@ export async function upsertLoginSession(
       return 'revoked';
     }
 
+    if (!data?.createdAt || !data?.sessionId || !data?.userId) {
+      await setDoc(sessionRef, {
+        sessionId,
+        userId,
+        provider: data?.provider || provider,
+        deviceLabel,
+        platform,
+        status: 'active',
+        createdAt: data?.createdAt || serverTimestamp(),
+        lastActiveAt: serverTimestamp(),
+      });
+      return 'active';
+    }
+
     await updateDoc(sessionRef, {
       status: 'active',
       deviceLabel,
@@ -440,8 +454,23 @@ export async function upsertLoginSession(
 
 export async function revokeLoginSession(userId: string, sessionId: string): Promise<void> {
   const path = `users/${userId}/loginSessions/${sessionId}`;
+  const sessionRef = doc(db, 'users', userId, 'loginSessions', sessionId);
   try {
-    await updateDoc(doc(db, 'users', userId, 'loginSessions', sessionId), {
+    const snap = await getDoc(sessionRef);
+    if (!snap.exists()) {
+      return;
+    }
+
+    const data = snap.data();
+    if (data?.status === 'revoked') {
+      return;
+    }
+
+    if (!data?.createdAt || !data?.sessionId || !data?.userId || !data?.deviceLabel || !data?.provider) {
+      return;
+    }
+
+    await updateDoc(sessionRef, {
       status: 'revoked',
       lastActiveAt: serverTimestamp(),
     });

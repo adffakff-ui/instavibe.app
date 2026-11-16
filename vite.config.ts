@@ -7,42 +7,6 @@ import {VitePWA} from 'vite-plugin-pwa';
 export default defineConfig(() => {
   return {
     plugins: [
-      {
-        name: 'dev-sw-cleanup',
-        apply: 'serve',
-        transformIndexHtml() {
-          return [
-            {
-              tag: 'script',
-              attrs: { type: 'text/javascript' },
-              injectTo: 'head-prepend',
-              children: `
-(function() {
-  if (!('serviceWorker' in navigator)) return;
-  var hadController = Boolean(navigator.serviceWorker.controller);
-  Promise.all([
-    navigator.serviceWorker.getRegistrations().then(function(regs) {
-      return Promise.all(regs.map(function(r) { return r.unregister(); }));
-    }),
-    'caches' in window
-      ? caches.keys().then(function(keys) {
-          return Promise.all(keys.map(function(k) { return caches.delete(k); }));
-        })
-      : Promise.resolve()
-  ]).then(function() {
-    if (hadController && !sessionStorage.getItem('__dev_sw_reloaded__')) {
-      sessionStorage.setItem('__dev_sw_reloaded__', '1');
-      window.location.reload();
-    } else {
-      sessionStorage.removeItem('__dev_sw_reloaded__');
-    }
-  }).catch(function() {});
-})();
-              `.trim(),
-            },
-          ];
-        },
-      },
       react(),
       tailwindcss(),
       VitePWA({
@@ -52,13 +16,17 @@ export default defineConfig(() => {
         manifest: false,
         workbox: {
           globPatterns: ['assets/**/*.{js,css}', '**/*.{ico,png,svg,woff,woff2}'],
-          globIgnores: ['**/sw.js', '**/workbox-*.js'],
+          globIgnores: ['**/sw.js', '**/workbox-*.js', '**/version.json'],
           cleanupOutdatedCaches: true,
           clientsClaim: true,
           skipWaiting: true,
           navigateFallback: null,
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
           runtimeCaching: [
+            {
+              urlPattern: /\/version\.json/i,
+              handler: 'NetworkOnly',
+            },
             {
               urlPattern: ({request}) => request.mode === 'navigate',
               handler: 'NetworkFirst',
@@ -101,7 +69,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: false,
+          enabled: true,
           type: 'module',
         },
       }),

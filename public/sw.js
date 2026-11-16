@@ -1,4 +1,5 @@
-const CACHE_NAME = 'instavibe-cache-v6';
+const APP_VERSION = '2.3.0';
+const CACHE_NAME = `instavibe-cache-v${APP_VERSION}`;
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',

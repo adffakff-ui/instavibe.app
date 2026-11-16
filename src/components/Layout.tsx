@@ -15,8 +15,10 @@ export default function Layout({
   onOpenProfile: (uid: string) => void;
   onOpenInstall: () => void;
 }) {
+  const isImmersiveMobile = currentView === 'reels' || currentView === 'live';
+
   return (
-    <div className="min-h-screen bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 md:pb-0 md:ps-20 lg:ps-64">
+    <div className="min-h-[100dvh] flex flex-col bg-white dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-[calc(4rem+env(safe-area-inset-bottom,0px))] md:pb-0 md:ps-20 lg:ps-64">
       <Header
         currentView={currentView}
         setView={setView}
@@ -28,7 +30,17 @@ export default function Layout({
         setView={setView}
         onOpenInstall={onOpenInstall}
       />
-      <main className={`${currentView === 'live' ? 'max-w-screen-xl' : 'max-w-screen-md'} mx-auto pt-16 md:pt-20 px-3 sm:px-4 md:px-8`}>
+      <main
+        className={`flex-1 w-full mx-auto pt-[calc(3.5rem+env(safe-area-inset-top,0px))] md:pt-[calc(4.5rem+env(safe-area-inset-top,0px))] ${
+          currentView === 'live'
+            ? 'max-w-screen-xl px-0 sm:px-4 md:px-8'
+            : currentView === 'feed'
+            ? 'max-w-md px-0 sm:px-4'
+            : isImmersiveMobile
+            ? 'max-w-screen-md px-0 sm:px-4 md:px-8'
+            : 'max-w-screen-md px-0 sm:px-4 md:px-8'
+        }`}
+      >
         {children}
       </main>
     </div>

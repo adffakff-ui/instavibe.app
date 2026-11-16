@@ -32,7 +32,9 @@ import {
   normalizePhoneNumber,
   USERNAME_REGEX,
 } from '../lib/authService';
-import { OfflineIndicator, PWAInstallModal } from './PWAInstallModal';
+import { AppUpdateBanner, OfflineIndicator, PWAInstallModal } from './PWAInstallModal';
+import { APP_VERSION, APP_VERSION_LABEL } from '../lib/version';
+import { usePWAInstall } from '../hooks/usePWAInstall';
 
 type AuthMode = 'login' | 'phone' | 'register' | 'reset';
 type PhoneStep = 'enter-phone' | 'verify-otp';
@@ -69,6 +71,7 @@ export default function AuthPortal({
     language,
     setLanguage,
   } = useAuth();
+  const { isInstallable } = usePWAInstall();
   const isAr = language === 'ar';
 
   const [mode, setMode] = useState<AuthMode>('login');
@@ -339,7 +342,7 @@ export default function AuthPortal({
   const usernameValid = username.trim().length === 0 ? null : USERNAME_REGEX.test(username.trim());
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-6">
+    <div className="min-h-[100dvh] pt-safe pb-safe bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-6">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-800 p-6 sm:p-8 space-y-5">
         {/* Top Row: Brand & Language Toggle */}
         <div className="flex items-center justify-between gap-3">
@@ -355,6 +358,44 @@ export default function AuthPortal({
             <span>{isAr ? 'English' : 'العربية'}</span>
           </button>
         </div>
+
+        {/* Elevated Real App Install Bar (Top of Auth Card) */}
+        {!isInstalled ? (
+          <button
+            type="button"
+            onClick={onInstallTrigger}
+            className={`w-full min-h-[44px] flex items-center justify-between gap-2 py-2.5 px-3.5 rounded-2xl text-xs font-bold transition-all active:scale-[0.98] shadow-sm ${
+              isInstallable
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white'
+                : 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white'
+            }`}
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <Download size={16} className="shrink-0" />
+              <span className="truncate">
+                {isInstallable
+                  ? isAr
+                    ? 'تثبيت التطبيق الآن (بنقرة واحدة)'
+                    : 'Install App Now (1-Tap)'
+                  : isAr
+                  ? 'تثبيت تطبيق InstaVibe على جهازك'
+                  : 'Install InstaVibe on Device'}
+              </span>
+            </div>
+            <span className="px-2 py-0.5 rounded-lg bg-white/20 text-[10px] font-extrabold tabular-nums shrink-0">
+              {APP_VERSION_LABEL}
+            </span>
+          </button>
+        ) : (
+          <div className="w-full py-2 px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-emerald-700 dark:text-emerald-300 text-xs font-bold flex items-center justify-center gap-1.5">
+            <CheckCircle2 size={14} />
+            <span>
+              {isAr
+                ? `التطبيق مثبّت ويعمل كحزمة مستقلة • ${APP_VERSION_LABEL}`
+                : `App Installed (Standalone) • ${APP_VERSION_LABEL}`}
+            </span>
+          </div>
+        )}
 
         {/* Pending Email Verification View (after Sign Up) */}
         {pendingEmailVerification ? (
@@ -1146,35 +1187,21 @@ export default function AuthPortal({
           </>
         )}
 
-        {/* Mobile App Install (Outside App) */}
-        <div className="pt-2 space-y-2 border-t border-slate-100 dark:border-slate-800">
-          {!isInstalled ? (
-            <button
-              type="button"
-              onClick={onInstallTrigger}
-              className="w-full min-h-[44px] flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white py-2.5 px-4 rounded-xl text-xs font-bold transition-all active:scale-[0.98] shadow-sm"
-            >
-              <Download size={15} />
-              <span>{isAr ? 'تثبيت التطبيق على جهازك (v2.1.0)' : 'Install App on Device (v2.1.0)'}</span>
-            </button>
-          ) : (
-            <div className="w-full py-2 px-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-900/60 text-emerald-700 dark:text-emerald-300 text-xs font-bold flex items-center justify-center gap-1.5">
-              <CheckCircle2 size={14} />
-              <span>{isAr ? 'التطبيق مثبّت • الإصدار v2.1.0' : 'App Installed • v2.1.0'}</span>
-            </div>
-          )}
+        {/* Version Footer */}
+        <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
           <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
             <Smartphone size={13} className="text-purple-500 shrink-0" />
             <span>
               {isAr
-                ? 'يعمل على أندرويد وآيفون وسطح المكتب كتطبيق مستقل • الإصدار 2.1.0'
-                : 'Standalone app for Android, iPhone & Desktop • Version 2.1.0'}
+                ? `يعمل على أندرويد وآيفون وسطح المكتب كتطبيق مستقل • الإصدار ${APP_VERSION}`
+                : `Standalone app for Android, iPhone & Desktop • Version ${APP_VERSION}`}
             </span>
           </div>
         </div>
       </div>
 
       <OfflineIndicator />
+      <AppUpdateBanner />
       <PWAInstallModal isOpen={showInstallModal} onClose={() => setShowInstallModal(false)} />
     </div>
   );

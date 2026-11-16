@@ -182,7 +182,7 @@ export default function OnboardingView() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-6">
+    <div className="min-h-[100dvh] pt-safe pb-safe bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-4 sm:p-6">
       <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-800 p-6 sm:p-8 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between gap-3">

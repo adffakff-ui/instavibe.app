@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { MessageCircle, BarChart3, Globe, Sparkles, Radio, Plus, X } from 'lucide-react';
+import { MessageCircle, BarChart3, Globe, Sparkles, Radio, Plus, X, Download } from 'lucide-react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
+import { usePWAInstall } from '../hooks/usePWAInstall';
 import UserAvatar from './UserAvatar';
 import PostCreation from './PostCreation';
 
@@ -12,6 +13,7 @@ export default function Header({
   currentView,
   setView,
   onOpenProfile,
+  onOpenInstall,
 }: {
   currentView: AppView;
   setView: (view: AppView) => void;
@@ -19,8 +21,17 @@ export default function Header({
   onOpenInstall?: () => void;
 }) {
   const { user, profile, language, setLanguage, t } = useAuth();
+  const { isInstalled, isInstallable, install } = usePWAInstall();
   const [activeLiveCount, setActiveLiveCount] = useState(0);
   const [showCreateModal, setShowCreateModal] = useState(false);
+
+  const handleHeaderInstall = async () => {
+    if (isInstallable) {
+      const ok = await install();
+      if (ok) return;
+    }
+    onOpenInstall?.();
+  };
 
   useEffect(() => {
     if (!user) {
@@ -40,8 +51,8 @@ export default function Header({
 
   return (
     <>
-      <header className="fixed top-0 inset-x-0 md:ps-20 lg:ps-64 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 h-14 md:h-16">
-        <div className="max-w-screen-xl mx-auto flex items-center justify-between h-full px-2.5 sm:px-5 gap-2">
+      <header className="fixed top-0 inset-x-0 md:ps-20 lg:ps-64 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 pt-safe h-[calc(3.5rem+env(safe-area-inset-top,0px))] md:h-[calc(4rem+env(safe-area-inset-top,0px))]">
+        <div className="max-w-screen-xl mx-auto flex items-center justify-between h-14 md:h-16 px-2.5 sm:px-5 gap-2">
           {/* Brand (mobile) + Live Broadcast Button */}
           <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0 shrink-0">
             <button
@@ -81,6 +92,34 @@ export default function Header({
 
           {/* Clean Action Bar with Balanced Sizing & No Overlap */}
           <div className="flex items-center gap-1 min-[380px]:gap-1.5 sm:gap-2 ms-auto shrink-0">
+            {/* Real In-App Install Button (Elevated to Top Header, suppressed automatically when installed) */}
+            {!isInstalled && (
+              <button
+                type="button"
+                onClick={handleHeaderInstall}
+                aria-label={language === 'ar' ? 'تثبيت التطبيق' : 'Install App'}
+                title={
+                  isInstallable
+                    ? language === 'ar'
+                      ? 'تثبيت التطبيق بنقرة واحدة'
+                      : 'Install App (1-Tap)'
+                    : language === 'ar'
+                    ? 'تثبيت التطبيق على جهازك'
+                    : 'Install App on Device'
+                }
+                className={`h-9 sm:h-10 px-2 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 text-xs font-bold transition-all active:scale-95 shrink-0 ${
+                  isInstallable
+                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-sm'
+                    : 'bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 border border-purple-200/80 dark:border-purple-800/70'
+                }`}
+              >
+                <Download size={15} className="shrink-0" />
+                <span className="hidden min-[400px]:inline whitespace-nowrap">
+                  {language === 'ar' ? 'تثبيت' : 'Install'}
+                </span>
+              </button>
+            )}
+
             {/* Quick Create Post / Reel (+) Button */}
             <button
               type="button"
@@ -189,7 +228,7 @@ export default function Header({
       {/* Post / Reel Creation Modal triggered by header Plus button */}
       {showCreateModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 p-2">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 w-full max-w-lg max-h-[90dvh] overflow-y-auto shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 p-2">
             <div className="flex justify-end p-2 pb-0">
               <button
                 type="button"

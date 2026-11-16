@@ -3,7 +3,6 @@ import { collection, query, where, getDocs, doc, getDoc, setDoc, serverTimestamp
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
-import { usePWAInstall } from '../hooks/usePWAInstall';
 import { sanitizeWebsiteUrl } from '../lib/authService';
 import { compressCoverImage } from '../utils/imageCompression';
 import {
@@ -29,14 +28,18 @@ import {
   Link2,
   ExternalLink,
   Camera,
-  Download,
+  Flag,
+  Eye,
+  BarChart3,
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { ar } from 'date-fns/locale';
 import StoryViewer, { StoryItem } from './StoryViewer';
+import StoryAnalyticsPanel from './StoryAnalyticsPanel';
 import SettingsModal, { SettingsTab } from './SettingsModal';
 import { ProfileSkeleton } from './SkeletonLoaders';
 import ActionConfirmationModal from './ActionConfirmationModal';
+import ReportModal from './ReportModal';
 import UserAvatar from './UserAvatar';
 import PostDetailModal from './PostDetailModal';
 import FollowButton from './FollowButton';
@@ -89,7 +92,6 @@ export default function ProfileView({
     unsavePost,
     updateCoverPhoto,
   } = useFirestore();
-  const { isInstalled, isInstallable, install, appVersion } = usePWAInstall();
   const coverInputRef = useRef<HTMLInputElement>(null);
   const [updatingCover, setUpdatingCover] = useState(false);
 
@@ -130,6 +132,7 @@ export default function ProfileView({
   const [loading, setLoading] = useState(!isOwnProfile);
   const [isBlockedByTarget, setIsBlockedByTarget] = useState(false);
   const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
   const [blockingInProgress, setBlockingInProgress] = useState(false);
 
   // Highlight creation modal state
@@ -151,6 +154,7 @@ export default function ProfileView({
   const [repostingStoryId, setRepostingStoryId] = useState<string | null>(null);
   const [archivingStoryId, setArchivingStoryId] = useState<string | null>(null);
   const [archiveToast, setArchiveToast] = useState<string | null>(null);
+  const [analyticsHighlightedStoryId, setAnalyticsHighlightedStoryId] = useState<string | null>(null);
 
   // Settings & Edit Profile modal state
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -353,7 +357,27 @@ export default function ProfileView({
             mediaURL: data.mediaURL,
             mediaType: data.mediaType || 'image',
             caption: data.caption || '',
+            likesCount: typeof data.likesCount === 'number' ? data.likesCount : 0,
+            viewsCount: typeof data.viewsCount === 'number' ? data.viewsCount : 0,
+            tapsForwardCount: typeof data.tapsForwardCount === 'number' ? data.tapsForwardCount : 0,
+            tapsBackCount: typeof data.tapsBackCount === 'number' ? data.tapsBackCount : 0,
+            repliesCount: typeof data.repliesCount === 'number' ? data.repliesCount : 0,
+            reactionCounts: data.reactionCounts || {},
             poll: data.poll,
+            music: data.music,
+            template: data.template,
+            collage: data.collage,
+            audience: data.audience,
+            closeFriendIds: Array.isArray(data.closeFriendIds) ? data.closeFriendIds : undefined,
+            allowReplies: typeof data.allowReplies === 'boolean' ? data.allowReplies : true,
+            allowComments: typeof data.allowComments === 'boolean' ? data.allowComments : undefined,
+            aiLabel: Boolean(data.aiLabel),
+            filterId: data.filterId,
+            textOverlays: Array.isArray(data.textOverlays) ? data.textOverlays : undefined,
+            stickers: Array.isArray(data.stickers) ? data.stickers : undefined,
+            mentions: Array.isArray(data.mentions) ? data.mentions : undefined,
+            partnership: data.partnership,
+            promoted: data.promoted,
             createdAt: data.createdAt,
             expiresAt: data.expiresAt,
           };
@@ -678,7 +702,15 @@ export default function ProfileView({
       for (const sId of storyIds) {
         const sSnap = await getDoc(doc(db, 'stories', sId));
         if (sSnap.exists()) {
-          fetchedStories.push({ id: sSnap.id, ...(sSnap.data() as any) });
+          const data = sSnap.data() as any;
+          fetchedStories.push({
+            id: sSnap.id,
+            ...data,
+            allowReplies: typeof data.allowReplies === 'boolean' ? data.allowReplies : true,
+            allowComments: typeof data.allowComments === 'boolean' ? data.allowComments : undefined,
+            aiLabel: Boolean(data.aiLabel),
+            promoted: data.promoted,
+          });
         }
       }
 
@@ -920,6 +952,18 @@ export default function ProfileView({
                     )}
                     <button
                       type="button"
+                      onClick={() => setShowReportModal(true)}
+                      className="min-h-[40px] px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900/60 hover:bg-amber-100 dark:hover:bg-amber-950/70"
+                      title={language === 'ar' ? 'إبلاغ عن هذا الحساب' : 'Report this profile'}
+                    >
+                      <Flag size={14} className="shrink-0" />
+                      <span>
+                        {language === 'ar' ? 'إبلاغ' : 'Report'}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={handleBlockClick}
                       className={`min-h-[40px] px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm ${
                         hasBlocked
@@ -1010,30 +1054,6 @@ export default function ProfileView({
                 </div>
               )}
             </div>
-
-            {/* Clean Inside-App Install Action on Mobile Own Profile */}
-            {isOwnProfile && !isInstalled && (
-              <div className="md:hidden pt-1">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (isInstallable) {
-                      const ok = await install();
-                      if (ok) return;
-                    }
-                    window.dispatchEvent(new CustomEvent('instavibe:open-install'));
-                  }}
-                  className="w-full py-2.5 px-4 rounded-xl bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/50 border border-purple-200/80 dark:border-purple-800/60 text-purple-700 dark:text-purple-300 text-xs font-bold flex items-center justify-center gap-2 transition-colors"
-                >
-                  <Download size={14} />
-                  <span>
-                    {language === 'ar'
-                      ? `تثبيت تطبيق InstaVibe على هاتفك (v${appVersion})`
-                      : `Install InstaVibe App on Device (v${appVersion})`}
-                  </span>
-                </button>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -1161,7 +1181,7 @@ export default function ProfileView({
               }`}
             >
               <Archive size={16} />
-              <span>{language === 'ar' ? 'الأرشيف' : 'Archives'}</span>
+              <span>{language === 'ar' ? 'الأرشيف' : 'Archive'}</span>
               {archivedStories.length > 0 && (
                 <span className="tabular-nums text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300">
                   {archivedStories.length}
@@ -1252,6 +1272,20 @@ export default function ProfileView({
             </div>
           )}
 
+          {/* Story Archive Analytics Panel (total views, taps forward/back, engagement for each expired story) */}
+          {!loadingArchives && (
+            <StoryAnalyticsPanel
+              stories={filteredArchivedStories}
+              language={language}
+              selectedStoryId={analyticsHighlightedStoryId}
+              onClearSelection={() => setAnalyticsHighlightedStoryId(null)}
+              onOpenStory={(story) => {
+                const idx = filteredArchivedStories.findIndex((s) => s.id === story.id);
+                setArchiveViewerState({ stories: filteredArchivedStories, index: idx >= 0 ? idx : 0 });
+              }}
+            />
+          )}
+
           {/* Archive Grid / Empty State */}
           {loadingArchives ? (
             <div className="flex justify-center py-16">
@@ -1317,10 +1351,16 @@ export default function ProfileView({
                       />
                     )}
 
-                    {/* Top Date Badge */}
-                    <div className="absolute top-2.5 start-2.5 px-2 py-1 rounded-lg bg-black/65 backdrop-blur-md text-white text-[10px] font-bold flex items-center gap-1 shadow-sm">
-                      <Calendar size={10} className="text-purple-300 shrink-0" />
-                      <span>{dateLabel}</span>
+                    {/* Top Date & Views Badges */}
+                    <div className="absolute top-2.5 start-2.5 flex flex-col items-start gap-1">
+                      <div className="px-2 py-1 rounded-lg bg-black/65 backdrop-blur-md text-white text-[10px] font-bold flex items-center gap-1 shadow-sm">
+                        <Calendar size={10} className="text-purple-300 shrink-0" />
+                        <span>{dateLabel}</span>
+                      </div>
+                      <div className="px-2 py-0.5 rounded-lg bg-black/65 backdrop-blur-md text-white/95 text-[10px] font-semibold flex items-center gap-1 shadow-sm tabular-nums">
+                        <Eye size={10} className="text-slate-300 shrink-0" />
+                        <span>{story.viewsCount || 0}</span>
+                      </div>
                     </div>
 
                     {/* Bottom Gradient Overlay + Caption + Actions */}
@@ -1361,6 +1401,14 @@ export default function ProfileView({
                           >
                             <Sparkles size={11} className="text-amber-300 shrink-0" />
                             <span className="truncate">{language === 'ar' ? 'تمييز' : 'Highlight'}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAnalyticsHighlightedStoryId(story.id)}
+                            title={language === 'ar' ? 'عرض تحليلات القصة' : 'View Story Analytics'}
+                            className="min-h-[32px] min-w-[32px] px-2 py-1 rounded-lg bg-white/15 hover:bg-purple-600/80 backdrop-blur-sm text-white flex items-center justify-center transition-colors"
+                          >
+                            <BarChart3 size={12} />
                           </button>
                           <button
                             type="button"
@@ -1751,6 +1799,27 @@ export default function ProfileView({
         targetUsername={activeProfile?.username}
         targetPhotoURL={activeProfile?.photoURL}
         isProcessing={blockingInProgress}
+      />
+
+      {/* CONTENT MODERATION REPORT MODAL */}
+      <ReportModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        target={{
+          type: 'profile',
+          id: userId,
+          authorId: userId,
+          username: activeProfile?.username,
+          photoURL: activeProfile?.photoURL,
+          summary: activeProfile?.fullName || activeProfile?.bio,
+        }}
+        onReportSubmitted={() => {
+          showToast(
+            language === 'ar'
+              ? 'تم استلام بلاغك بنجاح'
+              : 'Report submitted successfully'
+          );
+        }}
       />
 
       {/* HIGHLIGHT VIEWER MODAL */}

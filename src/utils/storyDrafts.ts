@@ -1,3 +1,12 @@
+import {
+  DrawStroke,
+  StoryAudience,
+  StoryMention,
+  StoryPartnership,
+  StorySticker,
+  StoryTextOverlay,
+} from '../types/story';
+
 export interface StoryDraft {
   id: string;
   userId: string;
@@ -9,6 +18,13 @@ export interface StoryDraft {
   brightness?: number;
   contrast?: number;
   isMonochrome?: boolean;
+  audience?: StoryAudience;
+  allowReplies?: boolean;
+  textOverlays?: StoryTextOverlay[];
+  stickers?: StorySticker[];
+  mentions?: StoryMention[];
+  partnership?: StoryPartnership;
+  strokes?: DrawStroke[];
   poll?: {
     question: string;
     optionA: string;

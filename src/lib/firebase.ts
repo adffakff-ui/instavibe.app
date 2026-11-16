@@ -17,6 +17,7 @@ function createFirestoreInstance() {
       app,
       {
         experimentalForceLongPolling: true,
+        experimentalLongPollingOptions: { timeoutSeconds: 8 },
         ignoreUndefinedProperties: true,
       },
       firebaseConfig.firestoreDatabaseId
@@ -34,6 +35,9 @@ async function validateFirestoreConnection(retried = false): Promise<void> {
     return;
   }
   try {
+    if (typeof auth.authStateReady === 'function') {
+      await auth.authStateReady();
+    }
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
@@ -50,11 +54,6 @@ async function validateFirestoreConnection(retried = false): Promise<void> {
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     enableNetwork(db).catch(() => {});
-  });
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && navigator.onLine !== false) {
-      enableNetwork(db).catch(() => {});
-    }
   });
 }
 

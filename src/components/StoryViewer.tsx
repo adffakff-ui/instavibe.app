@@ -15,17 +15,57 @@ import {
   Archive,
   Eye,
   Users,
-  Sparkles
+  Sparkles,
+  Music,
+  Star,
+  AtSign,
+  MapPin,
+  UserCheck,
+  Share2,
+  TrendingUp,
+  MoreVertical,
+  Bot,
+  Plus,
+  MessageSquareOff
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { ar } from 'date-fns/locale';
-import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { useFirestore } from '../hooks/useFirestore';
-import { BurstInstance, TapBurstOverlay } from './ReactionBar';
-import { REACTIONS, REACTION_MAP, ReactionType, getTopReactionEntries, normalizeReaction } from '../utils/reactions';
+import {
+  EmojiBurstEvent,
+  EmojiBurstOverlay,
+  StoryReactionSummaryPill,
+  StoryReactionTray,
+  createEmojiBurstEvent,
+} from './StoryReactionTray';
+import { REACTION_MAP, ReactionType, normalizeReaction } from '../utils/reactions';
 import UserAvatar from './UserAvatar';
+import { MUSIC_TRACKS, playMusicPreview } from '../utils/musicTracks';
+import {
+  CloseFriendUser,
+  StoryAudience,
+  StoryMention,
+  StoryPartnership,
+  StoryPromotion,
+  StorySticker,
+  StoryTextOverlay,
+} from '../types/story';
+import { exportFullStoryImage, getFilterCssById } from '../utils/storyEffects';
+import { StoryUserPickerModal, getTextOverlayStyleClasses } from './StoryStudioDrawers';
+import {
+  StoryAiLabelSheet,
+  StoryCaptionEditSheet,
+  StoryHighlightsPickerModal,
+  StoryOwnerMoreSheet,
+  StoryPartnershipSheet,
+  StoryPromoteSheet,
+  StorySendDrawer,
+  StorySettingsModal,
+  StoryShareSheet,
+} from './StoryOwnerModals';
 
 export interface StoryPoll {
   question: string;
@@ -61,7 +101,35 @@ export interface StoryItem {
   likesCount?: number;
   reactionCounts?: Record<string, number>;
   viewsCount?: number;
+  tapsForwardCount?: number;
+  tapsBackCount?: number;
+  repliesCount?: number;
   poll?: StoryPoll;
+  music?: {
+    title: string;
+    artist: string;
+    genre?: string;
+  };
+  template?: {
+    id: string;
+    name: string;
+    prompt: string;
+  };
+  collage?: {
+    count: number;
+    style: string;
+  };
+  audience?: StoryAudience;
+  closeFriendIds?: string[];
+  allowReplies?: boolean;
+  allowComments?: boolean;
+  aiLabel?: boolean;
+  promoted?: StoryPromotion | null;
+  filterId?: string;
+  textOverlays?: StoryTextOverlay[];
+  stickers?: StorySticker[];
+  mentions?: StoryMention[];
+  partnership?: StoryPartnership;
   createdAt: any;
   expiresAt?: string;
 }
@@ -104,6 +172,16 @@ export default function StoryViewer({
     reactToStory, 
     removeStoryReaction, 
     recordStoryView,
+    recordStoryTap,
+    recordStoryReply,
+    toggleStoryComments,
+    toggleStoryAiLabel,
+    updateStoryPartnership,
+    updateStoryMentions,
+    updateStoryPromotion,
+    updateStoryCaption,
+    addCloseFriend,
+    removeCloseFriend,
     getOrCreateConversation, 
     sendMessage 
   } = useFirestore();
@@ -152,8 +230,21 @@ export default function StoryViewer({
   const [showViewersSheet, setShowViewersSheet] = useState(false);
   const [viewersSheetTab, setViewersSheetTab] = useState<'viewers' | 'reactions'>('viewers');
 
-  const [bursts, setBursts] = useState<BurstInstance[]>([]);
-  const [floatingReactions, setFloatingReactions] = useState<{ id: number; emoji: string; offset: number }[]>([]);
+  // Owner bottom bar & "More" menu modal states
+  const [showMoreSheet, setShowMoreSheet] = useState(false);
+  const [showSendDrawer, setShowSendDrawer] = useState(false);
+  const [showHighlightsPicker, setShowHighlightsPicker] = useState(false);
+  const [showPartnershipSheet, setShowPartnershipSheet] = useState(false);
+  const [showAiLabelSheet, setShowAiLabelSheet] = useState(false);
+  const [showShareSheet, setShowShareSheet] = useState(false);
+  const [showPromoteSheet, setShowPromoteSheet] = useState(false);
+  const [showStorySettings, setShowStorySettings] = useState(false);
+  const [showCaptionEditor, setShowCaptionEditor] = useState(false);
+  const [ownerUserPickerMode, setOwnerUserPickerMode] = useState<'mention' | 'close_friends' | null>(null);
+  const [closeFriendsList, setCloseFriendsList] = useState<CloseFriendUser[]>([]);
+  const [ownerToast, setOwnerToast] = useState<string | null>(null);
+
+  const [bursts, setBursts] = useState<EmojiBurstEvent[]>([]);
   const [heartPopping, setHeartPopping] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -175,6 +266,26 @@ export default function StoryViewer({
 
   const currentStory = activeStories[currentIndex];
   const isOwner = Boolean(user && currentStory && currentStory.authorId === user.uid);
+  const commentsEnabled =
+    currentStory?.allowReplies !== false && currentStory?.allowComments !== false;
+  const anyOverlayOpen =
+    showViewersSheet ||
+    confirmDelete ||
+    showMoreSheet ||
+    showSendDrawer ||
+    showHighlightsPicker ||
+    showPartnershipSheet ||
+    showAiLabelSheet ||
+    showShareSheet ||
+    showPromoteSheet ||
+    showStorySettings ||
+    showCaptionEditor ||
+    Boolean(ownerUserPickerMode);
+
+  const showOwnerToast = (msg: string) => {
+    setOwnerToast(msg);
+    setTimeout(() => setOwnerToast(null), 2800);
+  };
 
   // Next and previous groups for sequential previews
   const nextGroup = currentGroupIndex < groups.length - 1 ? groups[currentGroupIndex + 1] : null;
@@ -184,9 +295,9 @@ export default function StoryViewer({
   useEffect(() => {
     if (!currentStory?.id || !user || !isFirebaseAuthenticated) return;
     
-    // Notify parent component
+    // Notify parent component asynchronously
     if (onStoryViewed) {
-      onStoryViewed(currentStory.id);
+      setTimeout(() => onStoryViewed(currentStory.id), 0);
     }
 
     // Record view in Firestore once per story per session
@@ -233,7 +344,10 @@ export default function StoryViewer({
   };
 
   // Sequence navigation: Next story or next user group
-  const handleNext = () => {
+  const handleNext = (fromTap: boolean = false) => {
+    if (fromTap && !isArchiveMode && user && currentStory?.id) {
+      recordStoryTap(currentStory.id, 'forward');
+    }
     if (currentIndex < activeStories.length - 1) {
       // Advance to next story of same user
       setCurrentIndex((prev) => prev + 1);
@@ -252,7 +366,10 @@ export default function StoryViewer({
   };
 
   // Sequence navigation: Previous story or previous user group
-  const handlePrev = () => {
+  const handlePrev = (fromTap: boolean = false) => {
+    if (fromTap && !isArchiveMode && user && currentStory?.id) {
+      recordStoryTap(currentStory.id, 'back');
+    }
     if (currentIndex > 0) {
       // Go to previous story of same user
       setCurrentIndex((prev) => prev - 1);
@@ -339,6 +456,65 @@ export default function StoryViewer({
     return unsub;
   }, [currentStory?.id, isOwner, isFirebaseAuthenticated]);
 
+  // Real-time listener on the story document so reactionCounts & likesCount saved on the story stay synced
+  useEffect(() => {
+    const storyId = currentStory?.id;
+    if (!storyId || !user || !isFirebaseAuthenticated) return;
+
+    const storyDocRef = doc(db, 'stories', storyId);
+    const unsub = onSnapshot(
+      storyDocRef,
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data() as any;
+        setActiveStories((prev) =>
+          prev.map((item) =>
+            item.id === storyId
+              ? {
+                  ...item,
+                  likesCount: typeof data.likesCount === 'number' ? data.likesCount : item.likesCount,
+                  reactionCounts:
+                    data.reactionCounts && typeof data.reactionCounts === 'object'
+                      ? data.reactionCounts
+                      : item.reactionCounts,
+                  viewsCount: typeof data.viewsCount === 'number' ? data.viewsCount : item.viewsCount,
+                  repliesCount: typeof data.repliesCount === 'number' ? data.repliesCount : item.repliesCount,
+                }
+              : item
+          )
+        );
+      },
+      (err) => console.warn('Story doc reaction sync listener notice:', err)
+    );
+
+    return unsub;
+  }, [currentStory?.id, user, isFirebaseAuthenticated]);
+
+  // Real-time listener for Close Friends (for owner Story Settings / Close Friends picker)
+  useEffect(() => {
+    if (!isOwner || !user?.uid || !isFirebaseAuthenticated) {
+      setCloseFriendsList([]);
+      return;
+    }
+    const unsub = onSnapshot(
+      collection(db, 'users', user.uid, 'closeFriends'),
+      (snap) => {
+        setCloseFriendsList(
+          snap.docs.map((d) => {
+            const data = d.data() as any;
+            return {
+              friendId: d.id,
+              username: data.username || 'user',
+              photoURL: data.photoURL || '',
+            };
+          })
+        );
+      },
+      (err) => console.warn('Close friends listener notice:', err)
+    );
+    return unsub;
+  }, [isOwner, user?.uid, isFirebaseAuthenticated]);
+
   // Progress Bar Timer for Images / Fallback
   useEffect(() => {
     setProgress(0);
@@ -356,11 +532,11 @@ export default function StoryViewer({
     const STEP = (INTERVAL_MS / DURATION_MS) * 100;
 
     progressTimerRef.current = setInterval(() => {
-      if (isPaused || confirmDelete || showViewersSheet) return;
+      if (isPaused || anyOverlayOpen) return;
 
       setProgress((prev) => {
         if (prev >= 100) {
-          handleNext();
+          handleNext(false);
           return 0;
         }
         return prev + STEP;
@@ -370,7 +546,7 @@ export default function StoryViewer({
     return () => {
       if (progressTimerRef.current) clearInterval(progressTimerRef.current);
     };
-  }, [currentIndex, currentStory, currentGroupIndex, isPaused, confirmDelete, showViewersSheet, activeStories.length]);
+  }, [currentIndex, currentStory, currentGroupIndex, isPaused, anyOverlayOpen, activeStories.length]);
 
   // Video Time Update Handler
   const handleVideoTimeUpdate = () => {
@@ -387,16 +563,27 @@ export default function StoryViewer({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        if (showViewersSheet) setShowViewersSheet(false);
+        if (showMoreSheet) setShowMoreSheet(false);
+        else if (showSendDrawer) setShowSendDrawer(false);
+        else if (showHighlightsPicker) setShowHighlightsPicker(false);
+        else if (showPartnershipSheet) setShowPartnershipSheet(false);
+        else if (showAiLabelSheet) setShowAiLabelSheet(false);
+        else if (showShareSheet) setShowShareSheet(false);
+        else if (showPromoteSheet) setShowPromoteSheet(false);
+        else if (showStorySettings) setShowStorySettings(false);
+        else if (showCaptionEditor) setShowCaptionEditor(false);
+        else if (ownerUserPickerMode) setOwnerUserPickerMode(null);
+        else if (showViewersSheet) setShowViewersSheet(false);
         else onClose();
       }
+      if (anyOverlayOpen) return;
       if (e.key === 'ArrowRight') {
-        if (language === 'ar') handlePrev();
-        else handleNext();
+        if (language === 'ar') handlePrev(true);
+        else handleNext(true);
       }
       if (e.key === 'ArrowLeft') {
-        if (language === 'ar') handleNext();
-        else handlePrev();
+        if (language === 'ar') handleNext(true);
+        else handlePrev(true);
       }
       if (e.key === ' ') {
         e.preventDefault();
@@ -405,12 +592,28 @@ export default function StoryViewer({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentIndex, currentGroupIndex, activeStories.length, showViewersSheet]);
+  }, [
+    currentIndex,
+    currentGroupIndex,
+    activeStories.length,
+    anyOverlayOpen,
+    showViewersSheet,
+    showMoreSheet,
+    showSendDrawer,
+    showHighlightsPicker,
+    showPartnershipSheet,
+    showAiLabelSheet,
+    showShareSheet,
+    showPromoteSheet,
+    showStorySettings,
+    showCaptionEditor,
+    ownerUserPickerMode,
+  ]);
 
   // Pause / Resume Video
   useEffect(() => {
     if (videoRef.current && currentStory?.mediaType === 'video') {
-      if (isPaused || confirmDelete || showViewersSheet) {
+      if (isPaused || anyOverlayOpen) {
         videoRef.current.pause();
         setIsVideoPlaying(false);
       } else {
@@ -418,7 +621,7 @@ export default function StoryViewer({
         setIsVideoPlaying(true);
       }
     }
-  }, [isPaused, confirmDelete, showViewersSheet, currentStory]);
+  }, [isPaused, anyOverlayOpen, currentStory]);
 
   const handleArchiveCurrentStory = async () => {
     if (!currentStory || !isOwner || archiving) return;
@@ -427,7 +630,7 @@ export default function StoryViewer({
     try {
       await archiveStory(storyIdToArchive);
       if (onStoryArchived) {
-        onStoryArchived(storyIdToArchive);
+        setTimeout(() => onStoryArchived(storyIdToArchive), 0);
       }
       const updated = activeStories.filter((s) => s.id !== storyIdToArchive);
       if (updated.length === 0) {
@@ -451,7 +654,7 @@ export default function StoryViewer({
     try {
       await deleteStory(storyIdToDelete);
       if (onStoryDeleted) {
-        onStoryDeleted(storyIdToDelete);
+        setTimeout(() => onStoryDeleted(storyIdToDelete), 0);
       }
 
       const updated = activeStories.filter((s) => s.id !== storyIdToDelete);
@@ -465,6 +668,165 @@ export default function StoryViewer({
     } catch (err) {
       console.error('Failed to delete story:', err);
     }
+  };
+
+  const handleSaveCurrentStoryMedia = async () => {
+    if (!currentStory) return;
+    try {
+      let downloadHref = currentStory.mediaURL;
+      const isVideo = currentStory.mediaType === 'video';
+
+      if (!isVideo) {
+        try {
+          downloadHref = await exportFullStoryImage({
+            sourceUrl: currentStory.mediaURL,
+            filterCss: getFilterCssById(currentStory.filterId),
+            strokes: [],
+            textOverlays: currentStory.textOverlays || [],
+            stickers: currentStory.stickers || [],
+            mentions: currentStory.mentions || [],
+            partnership: currentStory.partnership || null,
+            caption: currentStory.caption,
+          });
+        } catch {
+          downloadHref = currentStory.mediaURL;
+        }
+      }
+
+      const a = document.createElement('a');
+      a.href = downloadHref;
+      a.download = `instavibe-story-${currentStory.id}.${isVideo ? 'mp4' : 'jpg'}`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      showOwnerToast(
+        language === 'ar' ? 'تم حفظ القصة على جهازك' : 'Story saved to your device'
+      );
+    } catch (err) {
+      console.error('Failed to save story media:', err);
+      showOwnerToast(language === 'ar' ? 'تعذر حفظ الملف' : 'Could not save media');
+    }
+  };
+
+  const patchLocalCurrentStory = (patch: Partial<StoryItem>) => {
+    setActiveStories((prev) =>
+      prev.map((s, idx) => (idx === currentIndex ? { ...s, ...patch } : s))
+    );
+  };
+
+  const handleToggleCommentsOnCurrent = async () => {
+    if (!currentStory || !isOwner) return;
+    const nextEnabled = !commentsEnabled;
+    patchLocalCurrentStory({ allowReplies: nextEnabled, allowComments: nextEnabled });
+    try {
+      await toggleStoryComments(currentStory.id, nextEnabled);
+      showOwnerToast(
+        nextEnabled
+          ? language === 'ar'
+            ? 'تم تشغيل التعليقات والردود'
+            : 'Comments turned on'
+          : language === 'ar'
+          ? 'تم إيقاف تشغيل التعليقات والردود'
+          : 'Comments turned off'
+      );
+    } catch (err) {
+      console.error('Failed to toggle comments:', err);
+    }
+  };
+
+  const handleToggleAiLabelOnCurrent = async (next: boolean) => {
+    if (!currentStory || !isOwner) return;
+    patchLocalCurrentStory({ aiLabel: next });
+    await toggleStoryAiLabel(currentStory.id, next);
+    showOwnerToast(
+      next
+        ? language === 'ar'
+          ? 'تمت إضافة تسمية الذكاء الاصطناعي'
+          : 'AI label added'
+        : language === 'ar'
+        ? 'تمت إزالة تسمية الذكاء الاصطناعي'
+        : 'AI label removed'
+    );
+  };
+
+  const handleSavePartnershipOnCurrent = async (
+    next: StoryPartnership | null,
+    isNewPartner: boolean
+  ) => {
+    if (!currentStory || !isOwner) return;
+    patchLocalCurrentStory({ partnership: next || undefined });
+    await updateStoryPartnership(
+      currentStory.id,
+      next,
+      profile || (user ? { uid: user.uid, username: 'user', photoURL: '' } : undefined),
+      isNewPartner
+    );
+    showOwnerToast(
+      language === 'ar' ? 'تم تحديث إعدادات الشراكة' : 'Partnership settings updated'
+    );
+  };
+
+  const handleAddLiveMention = async (target: {
+    uid: string;
+    username: string;
+    photoURL?: string;
+  }) => {
+    if (!currentStory || !isOwner) return;
+    const existing = currentStory.mentions || [];
+    if (existing.some((m) => m.uid === target.uid)) {
+      showOwnerToast(
+        language === 'ar'
+          ? `@${target.username} مذكور بالفعل في هذه القصة`
+          : `@${target.username} is already mentioned`
+      );
+      return;
+    }
+    const offset = (existing.length % 4) * 10;
+    const newMention: StoryMention = {
+      uid: target.uid,
+      username: target.username,
+      photoURL: target.photoURL || '',
+      x: 50,
+      y: Math.min(82, 42 + offset),
+    };
+    const nextMentions = [...existing, newMention];
+    patchLocalCurrentStory({ mentions: nextMentions });
+    await updateStoryMentions(
+      currentStory.id,
+      nextMentions,
+      target.uid,
+      profile || (user ? { uid: user.uid, username: 'user', photoURL: '' } : undefined)
+    );
+    showOwnerToast(
+      language === 'ar' ? `تم ذكر @${target.username} في القصة` : `Mentioned @${target.username}`
+    );
+  };
+
+  const handleSavePromotionOnCurrent = async (next: StoryPromotion | null) => {
+    if (!currentStory || !isOwner) return;
+    patchLocalCurrentStory({ promoted: next });
+    await updateStoryPromotion(currentStory.id, next);
+    showOwnerToast(
+      next
+        ? language === 'ar'
+          ? 'تم تفعيل ترويج القصة بنجاح!'
+          : 'Story boost activated!'
+        : language === 'ar'
+        ? 'تم إيقاف ترويج القصة'
+        : 'Story boost paused'
+    );
+  };
+
+  const handleSaveCaptionOnCurrent = async (nextCaption: string) => {
+    if (!currentStory || !isOwner) return;
+    const trimmed = nextCaption.trim();
+    patchLocalCurrentStory({ caption: trimmed });
+    await updateStoryCaption(currentStory.id, trimmed);
+    showOwnerToast(
+      language === 'ar' ? 'تم تحديث نص القصة' : 'Story caption updated'
+    );
   };
 
   const handleVotePoll = async (choice: 'A' | 'B') => {
@@ -499,21 +861,34 @@ export default function StoryViewer({
     }
   };
 
-  const spawnBurst = (emoji: string, x?: number, y?: number) => {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
-    setBursts((prev) => [...prev, { id, emoji, x, y }]);
+  const spawnBurst = (
+    emoji: string,
+    x: number = 50,
+    y: number = 82,
+    direction: 'fountain' | 'radial' = 'fountain'
+  ) => {
+    const burstEvent = createEmojiBurstEvent(emoji, x, y, direction);
+    setBursts((prev) => [...prev, burstEvent]);
     setTimeout(() => {
-      setBursts((prev) => prev.filter((b) => b.id !== id));
-    }, 850);
+      setBursts((prev) => prev.filter((b) => b.id !== burstEvent.id));
+    }, 1050);
   };
 
-  const spawnFloatingReaction = (emoji: string) => {
-    const id = Date.now() + Math.floor(Math.random() * 1000);
-    const offset = Math.floor(Math.random() * 64) - 32;
-    setFloatingReactions((prev) => [...prev, { id, emoji, offset }]);
-    setTimeout(() => {
-      setFloatingReactions((prev) => prev.filter((item) => item.id !== id));
-    }, 1200);
+  const getBurstCoordsFromButton = (buttonEl?: HTMLButtonElement | null): { x: number; y: number } => {
+    if (!buttonEl || !mediaCanvasRef.current) {
+      return { x: 50, y: 84 };
+    }
+    const canvasRect = mediaCanvasRef.current.getBoundingClientRect();
+    const btnRect = buttonEl.getBoundingClientRect();
+    if (canvasRect.width <= 0) {
+      return { x: 50, y: 84 };
+    }
+    const btnCenterX = btnRect.left + btnRect.width / 2;
+    const xPct = ((btnCenterX - canvasRect.left) / canvasRect.width) * 100;
+    return {
+      x: Math.min(90, Math.max(10, xPct)),
+      y: 86,
+    };
   };
 
   const currentUserReaction: ReactionType | null =
@@ -530,7 +905,10 @@ export default function StoryViewer({
   })();
 
   const totalStoryReactionsCount =
-    storyReactions.length > 0 ? storyReactions.length : currentStory?.likesCount || 0;
+    storyReactions.length > 0
+      ? storyReactions.length
+      : currentStory?.likesCount ||
+        Object.values(derivedReactionCounts).reduce((sum, n) => sum + (typeof n === 'number' ? n : 0), 0);
 
   const totalViewsCount = Math.max(
     currentStory?.viewsCount || 0,
@@ -539,37 +917,69 @@ export default function StoryViewer({
 
   const applyStoryReaction = async (
     reaction: ReactionType,
-    options?: { keepExisting?: boolean; burstCoords?: { x: number; y: number } }
+    options?: {
+      keepExisting?: boolean;
+      burstCoords?: { x: number; y: number };
+      triggerEl?: HTMLButtonElement | null;
+    }
   ) => {
     if (!user || !currentStory) return;
     const prev = currentUserReaction;
 
     if (options?.keepExisting && prev) {
       if (options.burstCoords) {
-        spawnBurst(REACTION_MAP[prev].emoji, options.burstCoords.x, options.burstCoords.y);
+        spawnBurst(REACTION_MAP[prev].emoji, options.burstCoords.x, options.burstCoords.y, 'radial');
       }
       return;
     }
 
     if (prev === reaction) {
-      // Toggle off
+      // Optimistically update story document counts & user reaction when toggling off
+      const nextCounts: Record<string, number> = { ...(currentStory.reactionCounts || derivedReactionCounts) };
+      if (typeof nextCounts[prev] === 'number' && nextCounts[prev] > 0) {
+        const decremented = nextCounts[prev] - 1;
+        if (decremented > 0) nextCounts[prev] = decremented;
+        else delete nextCounts[prev];
+      }
+      patchLocalCurrentStory({
+        likesCount: Math.max(0, (currentStory.likesCount ?? totalStoryReactionsCount) - 1),
+        reactionCounts: nextCounts,
+      });
       setStoryReactions((list) => list.filter((item) => item.userId !== user.uid));
       await removeStoryReaction(currentStory.id, user.uid);
       return;
     }
 
-    // Record / switch reaction
+    // Record / switch reaction & trigger celebratory burst animation
     const emoji = REACTION_MAP[reaction].emoji;
     if (options?.burstCoords) {
-      spawnBurst(emoji, options.burstCoords.x, options.burstCoords.y);
+      spawnBurst(emoji, options.burstCoords.x, options.burstCoords.y, 'radial');
     } else {
-      spawnFloatingReaction(emoji);
+      const origin = getBurstCoordsFromButton(options?.triggerEl);
+      spawnBurst(emoji, origin.x, origin.y, 'fountain');
     }
 
     if (reaction === 'heart') {
       setHeartPopping(true);
       setTimeout(() => setHeartPopping(false), 360);
     }
+
+    // Optimistically sync both story document reactionCounts & reactions list
+    const nextCounts: Record<string, number> = { ...(currentStory.reactionCounts || derivedReactionCounts) };
+    if (prev && typeof nextCounts[prev] === 'number' && nextCounts[prev] > 0) {
+      const decremented = nextCounts[prev] - 1;
+      if (decremented > 0) nextCounts[prev] = decremented;
+      else delete nextCounts[prev];
+    }
+    nextCounts[reaction] = (nextCounts[reaction] || 0) + 1;
+    const nextLikesCount = prev
+      ? Math.max(1, currentStory.likesCount ?? totalStoryReactionsCount)
+      : (currentStory.likesCount ?? totalStoryReactionsCount) + 1;
+
+    patchLocalCurrentStory({
+      likesCount: nextLikesCount,
+      reactionCounts: nextCounts,
+    });
 
     setStoryReactions((list) => {
       const filtered = list.filter((item) => item.userId !== user.uid);
@@ -616,9 +1026,9 @@ export default function StoryViewer({
     singleTapTimerRef.current = setTimeout(() => {
       singleTapTimerRef.current = null;
       if (direction === 'prev') {
-        handlePrev();
+        handlePrev(true);
       } else {
-        handleNext();
+        handleNext(true);
       }
     }, 220);
   };
@@ -637,6 +1047,9 @@ export default function StoryViewer({
           currentStory.authorId,
           profile || { uid: user.uid, username: language === 'ar' ? 'مستخدم' : 'Anonymous' }
         );
+        if (!isArchiveMode) {
+          recordStoryReply(currentStory.id);
+        }
         setReplyText('');
         setReplySent(true);
         setTimeout(() => setReplySent(false), 2500);
@@ -653,10 +1066,9 @@ export default function StoryViewer({
   const totalVotes = (currentStory.poll?.votesA || 0) + (currentStory.poll?.votesB || 0);
   const pctA = totalVotes > 0 ? Math.round(((currentStory.poll?.votesA || 0) / totalVotes) * 100) : 50;
   const pctB = totalVotes > 0 ? 100 - pctA : 50;
-  const topStoryReactions = getTopReactionEntries(derivedReactionCounts, totalStoryReactionsCount, 3);
 
   return (
-    <div className="fixed inset-0 z-[130] bg-black/95 sm:bg-black/90 backdrop-blur-md flex items-center justify-center sm:p-4 select-none">
+    <div className="fixed inset-0 z-[130] h-[100dvh] bg-black sm:bg-black/90 backdrop-blur-md flex items-center justify-center sm:p-4 select-none">
       {/* Blurred background ambiance */}
       {currentStory.mediaType !== 'video' && (
         <div className="absolute inset-0 opacity-40 blur-3xl overflow-hidden pointer-events-none scale-125">
@@ -664,9 +1076,9 @@ export default function StoryViewer({
         </div>
       )}
 
-      {/* Main Story Container (9:16 Aspect Ratio) */}
+      {/* Main Story Container (Edge-to-edge on mobile, 9:16 Aspect Ratio on desktop/tablet) */}
       <div 
-        className="relative w-full max-w-[420px] h-full sm:h-[92vh] sm:max-h-[820px] aspect-[9/16] bg-slate-950 rounded-none sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col border border-white/10"
+        className="relative w-full sm:max-w-[420px] h-full sm:h-[92dvh] sm:max-h-[820px] sm:aspect-[9/16] bg-slate-950 rounded-none sm:rounded-3xl overflow-hidden shadow-2xl flex flex-col border-0 sm:border sm:border-white/10 pt-safe pb-safe sm:pt-0 sm:pb-0"
         onMouseDown={() => setIsPaused(true)}
         onMouseUp={() => setIsPaused(false)}
         onTouchStart={() => setIsPaused(true)}
@@ -723,15 +1135,32 @@ export default function StoryViewer({
         {/* Story Header */}
         <div className="absolute top-12 inset-x-3 flex items-center justify-between z-30 pointer-events-auto">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-full ring-2 ring-gradient-to-tr ring-purple-500 overflow-hidden bg-slate-800 shrink-0 shadow-md">
-              <UserAvatar
-                src={currentStory.authorPhotoURL}
-                username={currentStory.authorUsername}
-                iconSize={18}
-              />
+            <div className="relative shrink-0">
+              <div className="w-10 h-10 rounded-full ring-2 ring-gradient-to-tr ring-purple-500 overflow-hidden bg-slate-800 shadow-md">
+                <UserAvatar
+                  src={currentStory.authorPhotoURL}
+                  username={currentStory.authorUsername}
+                  iconSize={18}
+                />
+              </div>
+              {isOwner && !isArchiveMode && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onClose();
+                    window.dispatchEvent(new CustomEvent('instavibe:open-story-creation'));
+                  }}
+                  className="absolute -bottom-0.5 -end-0.5 w-[18px] h-[18px] rounded-full bg-slate-900 text-white border-2 border-slate-950 flex items-center justify-center hover:bg-purple-600 transition-colors shadow"
+                  title={language === 'ar' ? 'إضافة قصة جديدة' : 'Add another story'}
+                  aria-label={language === 'ar' ? 'إضافة قصة جديدة' : 'Add another story'}
+                >
+                  <Plus size={10} strokeWidth={3} />
+                </button>
+              )}
             </div>
             <div className="flex flex-col">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-white text-xs font-bold drop-shadow-sm truncate max-w-[130px]">
                   {currentStory.authorUsername}
                 </span>
@@ -740,30 +1169,55 @@ export default function StoryViewer({
                     ? formatDistanceToNow(currentStory.createdAt.toDate(), { addSuffix: false, locale: language === 'ar' ? ar : undefined }) 
                     : (language === 'ar' ? 'الآن' : 'just now')}
                 </span>
+                {currentStory.audience === 'close_friends' && (
+                  <span
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500 text-white text-[9px] font-extrabold shadow-sm"
+                    title={language === 'ar' ? 'للأصدقاء المقربين فقط' : 'Close Friends only'}
+                  >
+                    <Star size={9} fill="currentColor" />
+                    <span>{language === 'ar' ? 'الأصدقاء المقربون' : 'Close Friends'}</span>
+                  </span>
+                )}
               </div>
               
-              {/* Expiration or Archive Badge */}
-              {isArchiveMode ? (
-                <div className="flex items-center gap-1 text-[10px] text-purple-300 font-semibold">
-                  <Archive size={10} />
-                  <span>
-                    {currentStory.createdAt?.toDate
-                      ? format(currentStory.createdAt.toDate(), 'd MMM yyyy', {
-                          locale: language === 'ar' ? ar : undefined,
-                        })
-                      : (language === 'ar' ? 'قصة مؤرشفة' : 'Archived')}
-                  </span>
-                </div>
-              ) : (
-                expiresInfo && (
-                  <div className={`flex items-center gap-1 text-[10px] font-medium ${
-                    expiresInfo.isUrgent ? 'text-amber-300 animate-pulse' : 'text-slate-300'
-                  }`}>
-                    <Clock size={10} />
-                    <span>{expiresInfo.text}</span>
+              {/* Expiration, AI Label, Promoted, or Archive Metadata */}
+              <div className="flex items-center gap-2 flex-wrap">
+                {isArchiveMode ? (
+                  <div className="flex items-center gap-1 text-[10px] text-purple-300 font-semibold">
+                    <Archive size={10} />
+                    <span>
+                      {currentStory.createdAt?.toDate
+                        ? format(currentStory.createdAt.toDate(), 'd MMM yyyy', {
+                            locale: language === 'ar' ? ar : undefined,
+                          })
+                        : (language === 'ar' ? 'قصة مؤرشفة' : 'Archived')}
+                    </span>
                   </div>
-                )
-              )}
+                ) : (
+                  expiresInfo && (
+                    <div className={`flex items-center gap-1 text-[10px] font-medium ${
+                      expiresInfo.isUrgent ? 'text-amber-300' : 'text-slate-300'
+                    }`}>
+                      <Clock size={10} />
+                      <span>{expiresInfo.text}</span>
+                    </div>
+                  )
+                )}
+
+                {currentStory.aiLabel && (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-sky-300 font-semibold">
+                    <Bot size={10} />
+                    <span>{language === 'ar' ? 'معلومات الذكاء الاصطناعي' : 'AI info'}</span>
+                  </span>
+                )}
+
+                {isOwner && currentStory.promoted?.isPromoted && (
+                  <span className="inline-flex items-center gap-1 text-[10px] text-purple-300 font-semibold">
+                    <TrendingUp size={10} />
+                    <span>{language === 'ar' ? 'مروّجة' : 'Promoted'}</span>
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
@@ -857,21 +1311,24 @@ export default function StoryViewer({
           ref={mediaCanvasRef}
           className="flex-1 relative bg-black flex items-center justify-center overflow-hidden"
         >
-          <TapBurstOverlay bursts={bursts} />
+          <EmojiBurstOverlay bursts={bursts} />
 
-          {/* Floating Story Reactions */}
-          {floatingReactions.length > 0 && (
-            <div className="absolute bottom-12 inset-x-0 flex justify-center pointer-events-none z-30">
-              {floatingReactions.map((item) => (
-                <span
-                  key={item.id}
-                  style={{ transform: `translate3d(${item.offset}px, 0, 0)` }}
-                  className="absolute bottom-0 text-3xl sm:text-4xl drop-shadow-lg animate-story-reaction-rise"
-                  aria-hidden="true"
-                >
-                  {item.emoji}
-                </span>
-              ))}
+          {/* Live Story Reactions Summary Pill on Canvas */}
+          {totalStoryReactionsCount > 0 && (
+            <div className="absolute bottom-3 start-3 z-20">
+              <StoryReactionSummaryPill
+                reactionCounts={derivedReactionCounts}
+                totalCount={totalStoryReactionsCount}
+                language={language}
+                onClick={
+                  isOwner
+                    ? () => {
+                        setViewersSheetTab('reactions');
+                        setShowViewersSheet(true);
+                      }
+                    : undefined
+                }
+              />
             </div>
           )}
 
@@ -883,7 +1340,12 @@ export default function StoryViewer({
               playsInline
               muted={isMuted}
               onTimeUpdate={handleVideoTimeUpdate}
-              onEnded={handleNext}
+              onEnded={() => handleNext(false)}
+              style={{
+                filter: currentStory.filterId && currentStory.filterId !== 'none'
+                  ? getFilterCssById(currentStory.filterId)
+                  : undefined,
+              }}
               className="w-full h-full object-cover"
             />
           ) : (
@@ -894,6 +1356,127 @@ export default function StoryViewer({
               draggable={false}
             />
           )}
+
+          {/* PARTNERSHIP TAG OVERLAY */}
+          {currentStory.partnership &&
+            (currentStory.partnership.isPaid || currentStory.partnership.partnerUsername) && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (currentStory.partnership?.partnerId) {
+                    window.dispatchEvent(
+                      new CustomEvent('instavibe:open-profile', {
+                        detail: currentStory.partnership.partnerId,
+                      })
+                    );
+                    onClose();
+                  }
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+                className="absolute top-24 end-3 z-20 pointer-events-auto px-3 py-1 rounded-full bg-black/65 backdrop-blur-md border border-white/20 text-[11px] font-bold text-white flex items-center gap-1.5 shadow-lg hover:bg-black/80 transition-colors"
+              >
+                <UserCheck size={12} className="text-indigo-400" />
+                <span>
+                  {currentStory.partnership.partnerUsername
+                    ? language === 'ar'
+                      ? `شراكة مع @${currentStory.partnership.partnerUsername}`
+                      : `Partnered with @${currentStory.partnership.partnerUsername}`
+                    : language === 'ar'
+                    ? 'شراكة مدفوعة'
+                    : 'Paid Partnership'}
+                </span>
+              </button>
+            )}
+
+          {/* RICH TEXT OVERLAYS */}
+          {Array.isArray(currentStory.textOverlays) &&
+            currentStory.textOverlays.map((item) => {
+              const bg =
+                item.bgStyle === 'solid'
+                  ? item.color === '#ffffff'
+                    ? '#0f172a'
+                    : item.color
+                  : item.bgStyle === 'translucent'
+                  ? 'rgba(0,0,0,0.62)'
+                  : 'transparent';
+              const txtColor =
+                item.bgStyle === 'solid' && item.color !== '#ffffff' ? '#ffffff' : item.color;
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    left: `${item.x}%`,
+                    top: `${item.y}%`,
+                    transform: 'translate(-50%, -50%)',
+                    backgroundColor: bg,
+                    color: txtColor,
+                    textShadow:
+                      item.fontStyle === 'neon'
+                        ? `0 0 12px ${item.color}`
+                        : item.bgStyle === 'outline'
+                        ? '0 2px 6px rgba(0,0,0,0.95)'
+                        : '0 1px 4px rgba(0,0,0,0.5)',
+                  }}
+                  className={`absolute z-20 pointer-events-none px-3.5 py-1.5 rounded-2xl text-lg sm:text-xl text-center max-w-[78%] whitespace-pre-wrap break-words select-none ${getTextOverlayStyleClasses(
+                    item
+                  )}`}
+                >
+                  {item.text}
+                </div>
+              );
+            })}
+
+          {/* STICKERS OVERLAYS */}
+          {Array.isArray(currentStory.stickers) &&
+            currentStory.stickers.map((stk) => (
+              <div
+                key={stk.id}
+                style={{
+                  left: `${stk.x}%`,
+                  top: `${stk.y}%`,
+                  transform: 'translate(-50%, -50%)',
+                }}
+                className="absolute z-20 pointer-events-none select-none"
+              >
+                {stk.type === 'emoji' ? (
+                  <span className="text-4xl sm:text-5xl drop-shadow-xl block">{stk.value}</span>
+                ) : (
+                  <div className="px-3 py-1.5 rounded-xl bg-white/95 text-slate-900 text-xs font-extrabold shadow-xl flex items-center gap-1.5 whitespace-nowrap">
+                    {stk.type === 'location' && <MapPin size={13} className="text-emerald-600" />}
+                    {stk.type === 'time' && <Clock size={13} className="text-sky-600" />}
+                    {stk.type === 'mood' && <Sparkles size={13} className="text-purple-600" />}
+                    <span>{stk.value}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+
+          {/* CLICKABLE @MENTIONS OVERLAYS */}
+          {Array.isArray(currentStory.mentions) &&
+            currentStory.mentions.map((m) => (
+              <button
+                key={m.uid}
+                type="button"
+                style={{
+                  left: `${m.x}%`,
+                  top: `${m.y}%`,
+                  transform: 'translate(-50%, -50%)',
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  window.dispatchEvent(new CustomEvent('instavibe:open-profile', { detail: m.uid }));
+                  onClose();
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+                className="absolute z-20 pointer-events-auto px-3 py-1.5 rounded-full bg-slate-950/85 hover:bg-slate-900 backdrop-blur-md border border-white/30 text-white text-xs font-extrabold shadow-xl flex items-center gap-1 active:scale-95 transition-transform"
+              >
+                <AtSign size={12} className="text-amber-400" />
+                <span>{m.username}</span>
+              </button>
+            ))}
 
           {/* INTERACTIVE POLL STICKER OVERLAY */}
           {currentStory.poll && (
@@ -968,6 +1551,63 @@ export default function StoryViewer({
             </div>
           )}
 
+          {/* MUSIC SOUNDTRACK STICKER OVERLAY */}
+          {currentStory.music && (
+            <div
+              className="absolute top-20 start-4 z-20 pointer-events-auto bg-black/60 backdrop-blur-md rounded-full py-1.5 px-3 border border-white/25 flex items-center gap-2 shadow-lg max-w-[80%]"
+              onClick={(e) => {
+                e.stopPropagation();
+                const matched = MUSIC_TRACKS.find(t => t.title === currentStory.music?.title || t.titleAr === currentStory.music?.title);
+                if (matched) {
+                  playMusicPreview(matched);
+                }
+              }}
+            >
+              <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 flex items-center justify-center text-white shrink-0 shadow-sm animate-spin [animation-duration:4s]">
+                <Music size={11} />
+              </div>
+              <div className="min-w-0 flex-1 leading-tight pe-1">
+                <p className="text-[11px] font-bold text-white truncate">
+                  {currentStory.music.title}
+                </p>
+                <p className="text-[9px] text-white/70 truncate">
+                  {currentStory.music.artist}
+                </p>
+              </div>
+              <div className="flex items-center gap-0.5 shrink-0 opacity-80">
+                <span className="w-0.5 h-2.5 bg-white rounded-full animate-pulse" />
+                <span className="w-0.5 h-4 bg-white rounded-full animate-pulse [animation-delay:150ms]" />
+                <span className="w-0.5 h-2 bg-white rounded-full animate-pulse [animation-delay:300ms]" />
+              </div>
+            </div>
+          )}
+
+          {/* TEMPLATE (ADD YOURS) STICKER OVERLAY */}
+          {currentStory.template && (
+            <div
+              className="absolute bottom-28 inset-x-5 z-20 pointer-events-auto bg-white/20 dark:bg-black/50 backdrop-blur-lg rounded-2xl p-3 border border-white/30 text-white shadow-2xl space-y-1.5 text-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-center gap-1.5 text-purple-300 text-[10px] font-extrabold uppercase tracking-wider">
+                <Sparkles size={12} />
+                <span>{language === 'ar' ? 'أضف خاصتك • قالب القصة' : 'Add Yours • Story Template'}</span>
+              </div>
+              <p className="text-xs font-bold text-white leading-snug drop-shadow-sm">
+                {currentStory.template.prompt || currentStory.template.name}
+              </p>
+              <div className="flex items-center justify-center gap-1 pt-0.5">
+                <div className="flex -space-x-1.5 rtl:space-x-reverse overflow-hidden">
+                  <div className="w-4 h-4 rounded-full bg-purple-500 border border-white text-[7px] flex items-center justify-center font-bold">✨</div>
+                  <div className="w-4 h-4 rounded-full bg-rose-500 border border-white text-[7px] flex items-center justify-center font-bold">📸</div>
+                  <div className="w-4 h-4 rounded-full bg-amber-500 border border-white text-[7px] flex items-center justify-center font-bold">🔥</div>
+                </div>
+                <span className="text-[10px] text-white/80 font-medium">
+                  {language === 'ar' ? 'شارك في القالب' : 'Join this template'}
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Pause Indicator overlay when holding */}
           {isPaused && !showViewersSheet && (
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 p-3 bg-black/60 backdrop-blur-md rounded-full text-white pointer-events-none z-20">
@@ -995,7 +1635,7 @@ export default function StoryViewer({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                handlePrev();
+                handlePrev(true);
               }}
               className="hidden sm:flex absolute start-3 top-1/2 -translate-y-1/2 p-2.5 bg-black/50 hover:bg-black/80 text-white rounded-full transition-all z-20 backdrop-blur-sm border border-white/15 hover:scale-105"
               title={language === 'ar' ? 'السابق' : 'Previous'}
@@ -1009,7 +1649,7 @@ export default function StoryViewer({
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                handleNext();
+                handleNext(true);
               }}
               className="hidden sm:flex absolute end-3 top-1/2 -translate-y-1/2 p-2.5 bg-black/50 hover:bg-black/80 text-white rounded-full transition-all z-20 backdrop-blur-sm border border-white/15 hover:scale-105 group"
               title={
@@ -1023,81 +1663,170 @@ export default function StoryViewer({
           )}
         </div>
 
-        {/* Bottom Area: Caption + Persistent Like/Reactions + Direct Message reply */}
+        {/* Bottom Area: Caption + Owner Story Toolbar / Viewer Reply & Reactions */}
         <div 
-          className="relative z-30 p-3.5 sm:p-4 bg-gradient-to-t from-black/95 via-black/75 to-transparent space-y-2.5 pointer-events-auto"
+          className="relative z-30 p-3.5 sm:p-4 bg-gradient-to-t from-black/95 via-black/80 to-transparent space-y-2.5 pointer-events-auto"
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
         >
-          {/* Caption Overlay */}
-          {currentStory.caption && (
-            <div className="bg-black/50 backdrop-blur-md border border-white/10 rounded-2xl p-2.5 text-center">
-              <p className="text-white text-xs font-medium leading-relaxed drop-shadow">
-                {currentStory.caption}
-              </p>
+          {/* Action Feedback Toast */}
+          {ownerToast && (
+            <div className="mx-auto w-fit px-3.5 py-1.5 rounded-full bg-white text-slate-900 text-xs font-bold shadow-xl animate-in fade-in slide-in-from-bottom-2">
+              {ownerToast}
             </div>
           )}
 
-          {/* Owner Story Insights & Viewers Bar */}
+          {/* Caption Display or Owner Inline Caption Prompt ("اكتب شيئًا...") */}
+          {currentStory.caption ? (
+            isOwner ? (
+              <button
+                type="button"
+                onClick={() => setShowCaptionEditor(true)}
+                className="w-full bg-black/50 hover:bg-black/65 backdrop-blur-md border border-white/10 rounded-2xl p-2.5 text-center transition-colors"
+                title={language === 'ar' ? 'تعديل الشرح' : 'Edit caption'}
+              >
+                <p className="text-white text-xs font-medium leading-relaxed drop-shadow">
+                  {currentStory.caption}
+                </p>
+              </button>
+            ) : (
+              <div className="bg-black/50 backdrop-blur-md border border-white/10 rounded-2xl p-2.5 text-center">
+                <p className="text-white text-xs font-medium leading-relaxed drop-shadow">
+                  {currentStory.caption}
+                </p>
+              </div>
+            )
+          ) : isOwner && !isArchiveMode ? (
+            <div className="flex items-center justify-between px-1">
+              <button
+                type="button"
+                onClick={() => setShowCaptionEditor(true)}
+                className="text-xs font-medium text-white/60 hover:text-white transition-colors py-1"
+              >
+                {language === 'ar' ? 'اكتب شيئًا...' : 'Write something...'}
+              </button>
+              {!commentsEnabled && (
+                <span className="inline-flex items-center gap-1 text-[11px] text-white/50">
+                  <MessageSquareOff size={12} />
+                  <span>{language === 'ar' ? 'التعليقات متوقفة' : 'Comments off'}</span>
+                </span>
+              )}
+            </div>
+          ) : null}
+
+          {/* Owner Story Bottom Action Bar (matches Screenshot 2: Activity, Share to, WA/FB Share, Promote, Mention, More) */}
           {isOwner && (
-            <div className="flex items-center justify-between gap-2 bg-white/10 backdrop-blur-md border border-white/15 rounded-2xl p-2">
-              <div className="flex items-center gap-2">
-                {/* Viewers Counter Button */}
+            <div className="space-y-1.5 pt-0.5">
+              <div className="grid grid-cols-6 gap-1 border-t border-white/10 pt-2">
+                {/* 1. Activity (النشاط) */}
                 <button
                   type="button"
                   onClick={() => {
                     setViewersSheetTab('viewers');
                     setShowViewersSheet(true);
                   }}
-                  className="min-h-[38px] px-3 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 border border-white/20"
-                  title={language === 'ar' ? 'عرض قائمة المشاهدين' : 'View viewers list'}
+                  className="relative min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-xl hover:bg-white/10 text-white transition-colors px-0.5"
+                  title={language === 'ar' ? 'عرض المشاهدات والنشاط' : 'Story activity'}
                 >
-                  <Eye size={15} className="text-blue-400" />
-                  <span className="tabular-nums font-bold">
-                    {totalViewsCount}{' '}
-                    {language === 'ar' ? 'مشاهدة' : totalViewsCount === 1 ? 'view' : 'views'}
+                  <div className="relative">
+                    <UserCheck size={20} />
+                    {(totalViewsCount > 0 || totalStoryReactionsCount > 0) && (
+                      <span className="absolute -top-1.5 -end-2.5 min-w-[16px] h-4 px-1 rounded-full bg-purple-600 text-white text-[9px] font-bold tabular-nums flex items-center justify-center">
+                        {totalViewsCount}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] font-semibold truncate max-w-full">
+                    {language === 'ar' ? 'النشاط' : 'Activity'}
                   </span>
                 </button>
 
-                {/* Reactions Breakdown Button */}
+                {/* 2. Share to... (مشاركة على...) */}
                 <button
                   type="button"
-                  onClick={() => {
-                    setViewersSheetTab('reactions');
-                    setShowViewersSheet(true);
-                  }}
-                  className="min-h-[38px] px-3 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 border border-white/20"
-                  title={language === 'ar' ? 'عرض تفاعلات القصة' : 'View story reactions'}
+                  onClick={() => setShowShareSheet(true)}
+                  className="min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-xl hover:bg-white/10 text-white transition-colors px-0.5"
+                  title={language === 'ar' ? 'مشاركة القصة' : 'Share story'}
                 >
-                  {topStoryReactions.length > 0 ? (
-                    <span className="flex items-center -space-x-1 rtl:space-x-reverse">
-                      {topStoryReactions.map((item) => (
-                        <span key={item.meta.type} className="text-sm">{item.meta.emoji}</span>
-                      ))}
-                    </span>
-                  ) : (
-                    <Heart size={15} className="text-rose-400" />
-                  )}
-                  <span className="tabular-nums font-bold">
-                    {totalStoryReactionsCount}{' '}
-                    {language === 'ar' ? 'تفاعل' : totalStoryReactionsCount === 1 ? 'reaction' : 'reactions'}
+                  <Share2 size={20} />
+                  <span className="text-[10px] font-semibold truncate max-w-full">
+                    {language === 'ar' ? 'مشاركة على...' : 'Share to...'}
+                  </span>
+                </button>
+
+                {/* 3. Share on WhatsApp / Facebook (مشاركة على...) */}
+                <button
+                  type="button"
+                  onClick={() => setShowShareSheet(true)}
+                  className="min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-xl hover:bg-white/10 text-white transition-colors px-0.5"
+                  title={language === 'ar' ? 'مشاركة على واتساب وفيسبوك' : 'Share on WhatsApp & Facebook'}
+                >
+                  <svg
+                    width="24"
+                    height="20"
+                    viewBox="0 0 28 20"
+                    fill="none"
+                    aria-hidden="true"
+                    className="shrink-0"
+                  >
+                    <circle cx="9.5" cy="10" r="7.5" stroke="currentColor" strokeWidth="1.7" />
+                    <path
+                      d="M7.6 7.8c.2-.3.5-.3.7-.1l.8.9c.2.2.2.5 0 .7l-.4.4c.3.6.8 1.1 1.4 1.4l.4-.4c.2-.2.5-.2.7 0l.9.8c.2.2.2.5-.1.7-.5.4-1.2.5-1.8.2-1.4-.6-2.4-1.6-3-3-.3-.6-.2-1.3.4-1.6Z"
+                      fill="currentColor"
+                    />
+                    <circle cx="19" cy="10" r="7" fill="#020617" stroke="currentColor" strokeWidth="1.7" />
+                    <path
+                      d="M19.8 10.6h1.2l.2-1.5h-1.4V8.2c0-.4.2-.7.8-.7h.7V6.2c-.3 0-.7-.1-1.1-.1-1.1 0-1.9.7-1.9 1.9v1.1H17v1.5h1.3V14h1.5v-3.4Z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                  <span className="text-[10px] font-semibold truncate max-w-full">
+                    {language === 'ar' ? 'مشاركة على...' : 'Social'}
+                  </span>
+                </button>
+
+                {/* 4. Promote (ترويج) */}
+                <button
+                  type="button"
+                  onClick={() => setShowPromoteSheet(true)}
+                  className={`min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-xl hover:bg-white/10 transition-colors px-0.5 ${
+                    currentStory.promoted?.isPromoted ? 'text-purple-400' : 'text-white'
+                  }`}
+                  title={language === 'ar' ? 'ترويج القصة' : 'Promote story'}
+                >
+                  <TrendingUp size={20} />
+                  <span className="text-[10px] font-semibold truncate max-w-full">
+                    {language === 'ar' ? 'ترويج' : 'Boost'}
+                  </span>
+                </button>
+
+                {/* 5. Mention (ذكر) */}
+                <button
+                  type="button"
+                  onClick={() => setOwnerUserPickerMode('mention')}
+                  className="min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-xl hover:bg-white/10 text-white transition-colors px-0.5"
+                  title={language === 'ar' ? 'ذكر شخص في القصة' : 'Mention someone'}
+                >
+                  <AtSign size={20} />
+                  <span className="text-[10px] font-semibold truncate max-w-full">
+                    {language === 'ar' ? 'ذكر' : 'Mention'}
+                  </span>
+                </button>
+
+                {/* 6. More (المزيد) */}
+                <button
+                  type="button"
+                  onClick={() => setShowMoreSheet(true)}
+                  className="min-h-[48px] flex flex-col items-center justify-center gap-1 rounded-xl hover:bg-white/10 text-white transition-colors px-0.5"
+                  title={language === 'ar' ? 'المزيد من الخيارات' : 'More options'}
+                >
+                  <MoreVertical size={20} />
+                  <span className="text-[10px] font-semibold truncate max-w-full">
+                    {language === 'ar' ? 'المزيد' : 'More'}
                   </span>
                 </button>
               </div>
-
-              {/* Next Sequence Preview if exists */}
-              {nextGroup && (
-                <button
-                  type="button"
-                  onClick={() => handleNext()}
-                  className="text-[11px] text-purple-300 hover:text-white font-medium flex items-center gap-1 px-2 py-1"
-                >
-                  <span>{language === 'ar' ? 'التالي' : 'Next'}</span>
-                  <span className="max-w-[70px] truncate font-bold">@{nextGroup.authorUsername}</span>
-                  {language === 'ar' ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}
-                </button>
-              )}
             </div>
           )}
 
@@ -1105,39 +1834,51 @@ export default function StoryViewer({
           {!isOwner && user && (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={replyText}
-                  onChange={(e) => setReplyText(e.target.value)}
-                  onFocus={() => setIsPaused(true)}
-                  onBlur={() => setIsPaused(false)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') handleSendReply();
-                  }}
-                  placeholder={
-                    language === 'ar'
-                      ? `أرسل رسالة إلى ${currentStory.authorUsername}...`
-                      : `Send message to ${currentStory.authorUsername}...`
-                  }
-                  className="flex-1 bg-white/15 border border-white/20 rounded-full py-2.5 px-4 text-xs text-white placeholder-white/60 focus:outline-none focus:ring-1 focus:ring-white focus:bg-white/25 transition-all"
-                />
-                {replyText.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => handleSendReply()}
-                    className="min-h-[40px] min-w-[40px] flex items-center justify-center bg-white text-slate-900 rounded-full hover:bg-slate-100 transition-all active:scale-95 shrink-0 shadow-md"
-                    title={language === 'ar' ? 'إرسال الرد' : 'Send reply'}
-                    aria-label={language === 'ar' ? 'إرسال الرد' : 'Send reply'}
-                  >
-                    <Send size={16} />
-                  </button>
+                {!commentsEnabled ? (
+                  <div className="flex-1 bg-white/10 border border-white/15 rounded-full py-2.5 px-4 text-xs text-white/60 text-center font-medium">
+                    {language === 'ar'
+                      ? 'تم إيقاف التعليقات والردود على هذه القصة'
+                      : 'Comments & replies are turned off for this story'}
+                  </div>
+                ) : (
+                  <>
+                    <input
+                      type="text"
+                      value={replyText}
+                      onChange={(e) => setReplyText(e.target.value)}
+                      onFocus={() => setIsPaused(true)}
+                      onBlur={() => setIsPaused(false)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSendReply();
+                      }}
+                      placeholder={
+                        language === 'ar'
+                          ? `أرسل رسالة إلى ${currentStory.authorUsername}...`
+                          : `Send message to ${currentStory.authorUsername}...`
+                      }
+                      className="flex-1 bg-white/15 border border-white/20 rounded-full py-2.5 px-4 text-xs text-white placeholder-white/60 focus:outline-none focus:ring-1 focus:ring-white focus:bg-white/25 transition-all"
+                    />
+                    {replyText.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => handleSendReply()}
+                        className="min-h-[40px] min-w-[40px] flex items-center justify-center bg-white text-slate-900 rounded-full hover:bg-slate-100 transition-all active:scale-95 shrink-0 shadow-md"
+                        title={language === 'ar' ? 'إرسال الرد' : 'Send reply'}
+                        aria-label={language === 'ar' ? 'إرسال الرد' : 'Send reply'}
+                      >
+                        <Send size={16} />
+                      </button>
+                    )}
+                  </>
                 )}
 
                 {/* Dedicated Persistent Story Like Button */}
                 <button
                   type="button"
-                  onClick={() =>
-                    applyStoryReaction(currentUserReaction || 'heart')
+                  onClick={(e) =>
+                    applyStoryReaction(currentUserReaction || 'heart', {
+                      triggerEl: e.currentTarget,
+                    })
                   }
                   aria-label={language === 'ar' ? 'إعجاب بالقصة' : 'Like story'}
                   aria-pressed={Boolean(currentUserReaction)}
@@ -1167,35 +1908,15 @@ export default function StoryViewer({
                 </button>
               </div>
 
-              {/* Persistent Clickable Quick Reactions */}
-              <div className="flex items-center justify-between gap-1 px-0.5">
-                {REACTIONS.map((item) => {
-                  const isSelected = currentUserReaction === item.type;
-                  const count = derivedReactionCounts[item.type] || 0;
-                  return (
-                    <button
-                      key={item.type}
-                      type="button"
-                      onClick={() => applyStoryReaction(item.type)}
-                      aria-label={language === 'ar' ? item.labelAr : item.labelEn}
-                      aria-pressed={isSelected}
-                      title={language === 'ar' ? item.labelAr : item.labelEn}
-                      className={`min-h-[38px] flex-1 flex items-center justify-center gap-1 rounded-full transition-all active:scale-90 ${
-                        isSelected
-                          ? 'bg-white/25 ring-1 ring-white/60 scale-105'
-                          : 'hover:bg-white/15'
-                      }`}
-                    >
-                      <span className="text-lg leading-none">{item.emoji}</span>
-                      {count > 0 && (
-                        <span className="text-[10px] font-bold text-white/90 tabular-nums">
-                          {count}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
+              {/* Emoji Reaction Tray (triggers burst animation & saves count to story doc) */}
+              <StoryReactionTray
+                selectedReaction={currentUserReaction}
+                reactionCounts={derivedReactionCounts}
+                language={language}
+                onReact={(reaction, buttonEl) =>
+                  applyStoryReaction(reaction, { triggerEl: buttonEl })
+                }
+              />
 
               {replySent && (
                 <div className="text-center text-[11px] text-green-400 font-medium animate-in fade-in">
@@ -1233,7 +1954,7 @@ export default function StoryViewer({
             </div>
 
             {/* Quick Metrics */}
-            <div className="grid grid-cols-2 gap-2 my-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 my-3">
               <div className="bg-white/5 border border-white/10 rounded-2xl p-2.5 text-center">
                 <span className="text-[10px] text-white/60 block font-medium">
                   {language === 'ar' ? 'إجمالي المشاهدات' : 'Total Views'}
@@ -1244,10 +1965,26 @@ export default function StoryViewer({
               </div>
               <div className="bg-white/5 border border-white/10 rounded-2xl p-2.5 text-center">
                 <span className="text-[10px] text-white/60 block font-medium">
-                  {language === 'ar' ? 'إجمالي التفاعلات' : 'Total Reactions'}
+                  {language === 'ar' ? 'التفاعلات' : 'Likes / Reacts'}
                 </span>
                 <span className="text-lg font-black text-white tabular-nums">
                   {totalStoryReactionsCount}
+                </span>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-2.5 text-center">
+                <span className="text-[10px] text-white/60 block font-medium">
+                  {language === 'ar' ? 'نقرات للأمام / خلف' : 'Taps Fwd / Back'}
+                </span>
+                <span className="text-base font-black text-white tabular-nums">
+                  {currentStory.tapsForwardCount || 0} / {currentStory.tapsBackCount || 0}
+                </span>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-2.5 text-center">
+                <span className="text-[10px] text-white/60 block font-medium">
+                  {language === 'ar' ? 'الردود' : 'Replies'}
+                </span>
+                <span className="text-lg font-black text-white tabular-nums">
+                  {currentStory.repliesCount || 0}
                 </span>
               </div>
             </div>
@@ -1347,6 +2084,131 @@ export default function StoryViewer({
             </div>
           </div>
         )}
+
+        {/* Owner "More" Bottom Sheet ("المزيد" — matches Screenshot 1) */}
+        <StoryOwnerMoreSheet
+          isOpen={showMoreSheet}
+          isAr={language === 'ar'}
+          isArchiveMode={isArchiveMode}
+          mediaType={currentStory.mediaType}
+          commentsEnabled={commentsEnabled}
+          aiLabelEnabled={Boolean(currentStory.aiLabel)}
+          hasPartnership={Boolean(
+            currentStory.partnership?.isPaid ||
+              currentStory.partnership?.allowAds ||
+              currentStory.partnership?.partnerUsername
+          )}
+          archiving={archiving}
+          onClose={() => setShowMoreSheet(false)}
+          onDelete={() => setConfirmDelete(true)}
+          onArchive={handleArchiveCurrentStory}
+          onSaveMedia={handleSaveCurrentStoryMedia}
+          onOpenSend={() => setShowSendDrawer(true)}
+          onOpenHighlights={() => setShowHighlightsPicker(true)}
+          onOpenPartnership={() => setShowPartnershipSheet(true)}
+          onOpenAiLabel={() => setShowAiLabelSheet(true)}
+          onOpenShare={() => setShowShareSheet(true)}
+          onOpenStorySettings={() => setShowStorySettings(true)}
+          onToggleComments={handleToggleCommentsOnCurrent}
+        />
+
+        {/* Send Story via Direct Message Drawer ("إرسال") */}
+        <StorySendDrawer
+          isOpen={showSendDrawer}
+          isAr={language === 'ar'}
+          storyMediaURL={currentStory.mediaURL}
+          storyMediaType={currentStory.mediaType}
+          storyCaption={currentStory.caption}
+          onClose={() => setShowSendDrawer(false)}
+          onToast={showOwnerToast}
+        />
+
+        {/* Add/Remove Story Highlights Picker ("أبرز القصص") */}
+        <StoryHighlightsPickerModal
+          isOpen={showHighlightsPicker}
+          isAr={language === 'ar'}
+          storyId={currentStory.id}
+          storyMediaURL={currentStory.mediaURL}
+          storyMediaType={currentStory.mediaType}
+          onClose={() => setShowHighlightsPicker(false)}
+          onToast={showOwnerToast}
+        />
+
+        {/* Partnership Label & Partnership Ads Sheet */}
+        <StoryPartnershipSheet
+          isOpen={showPartnershipSheet}
+          isAr={language === 'ar'}
+          partnership={currentStory.partnership || null}
+          onSave={handleSavePartnershipOnCurrent}
+          onClose={() => setShowPartnershipSheet(false)}
+        />
+
+        {/* AI Label Sheet */}
+        <StoryAiLabelSheet
+          isOpen={showAiLabelSheet}
+          isAr={language === 'ar'}
+          enabled={Boolean(currentStory.aiLabel)}
+          onToggle={handleToggleAiLabelOnCurrent}
+          onClose={() => setShowAiLabelSheet(false)}
+        />
+
+        {/* Share Story Sheet (Copy, Native Share, WhatsApp, Facebook, Post to Feed) */}
+        <StoryShareSheet
+          isOpen={showShareSheet}
+          isAr={language === 'ar'}
+          storyId={currentStory.id}
+          storyMediaURL={currentStory.mediaURL}
+          storyMediaType={currentStory.mediaType}
+          storyCaption={currentStory.caption}
+          onClose={() => setShowShareSheet(false)}
+          onToast={showOwnerToast}
+        />
+
+        {/* Promote Story Sheet ("ترويج") */}
+        <StoryPromoteSheet
+          isOpen={showPromoteSheet}
+          isAr={language === 'ar'}
+          promoted={currentStory.promoted || null}
+          onSavePromotion={handleSavePromotionOnCurrent}
+          onClose={() => setShowPromoteSheet(false)}
+        />
+
+        {/* Story Settings Modal ("انتقال إلى إعدادات القصص") */}
+        <StorySettingsModal
+          isOpen={showStorySettings}
+          isAr={language === 'ar'}
+          onOpenCloseFriends={() => setOwnerUserPickerMode('close_friends')}
+          onClose={() => setShowStorySettings(false)}
+          onToast={showOwnerToast}
+        />
+
+        {/* Caption Inline Edit Sheet ("اكتب شيئًا...") */}
+        <StoryCaptionEditSheet
+          isOpen={showCaptionEditor}
+          isAr={language === 'ar'}
+          initialCaption={currentStory.caption || ''}
+          onSave={handleSaveCaptionOnCurrent}
+          onClose={() => setShowCaptionEditor(false)}
+        />
+
+        {/* Mention / Close Friends Picker for Live Story Owner */}
+        <StoryUserPickerModal
+          mode={ownerUserPickerMode}
+          isAr={language === 'ar'}
+          closeFriends={closeFriendsList}
+          partnership={currentStory.partnership || null}
+          onClose={() => setOwnerUserPickerMode(null)}
+          onSelectMention={handleAddLiveMention}
+          onSavePartnership={() => {}}
+          onToggleCloseFriend={async (friend, isAdding) => {
+            if (!user?.uid) return;
+            if (isAdding) {
+              await addCloseFriend(user.uid, friend);
+            } else {
+              await removeCloseFriend(user.uid, friend.uid);
+            }
+          }}
+        />
       </div>
     </div>
   );

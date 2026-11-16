@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { collection, query, orderBy, onSnapshot, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import { Plus, ChevronLeft, ChevronRight, Camera, Bookmark, Sparkles, Eye, Clock } from 'lucide-react';
+import { Plus, ChevronLeft, ChevronRight, Camera, Bookmark, Sparkles, Eye, Clock, Star } from 'lucide-react';
 import StoryCreation from './StoryCreation';
 import StoryViewer, { StoryItem, StoryUserGroup } from './StoryViewer';
 import { getSavedStoryDrafts } from '../utils/storyDrafts';
@@ -93,6 +93,15 @@ export default function StoryBar() {
           const data = doc.data() as any;
           if (blockedUsers && blockedUsers.includes(data.authorId)) return;
 
+          // Exclude Close Friends stories if viewer is neither author nor in closeFriendIds
+          if (data.audience === 'close_friends') {
+            const isAuthor = Boolean(user?.uid && data.authorId === user.uid);
+            const isAllowedFriend = Boolean(
+              user?.uid && Array.isArray(data.closeFriendIds) && data.closeFriendIds.includes(user.uid)
+            );
+            if (!isAuthor && !isAllowedFriend) return;
+          }
+
           // Exclude expired stories
           if (data.expiresAt) {
             const expTime = new Date(data.expiresAt).getTime();
@@ -109,8 +118,25 @@ export default function StoryBar() {
             caption: data.caption || '',
             likesCount: typeof data.likesCount === 'number' ? data.likesCount : 0,
             viewsCount: typeof data.viewsCount === 'number' ? data.viewsCount : 0,
+            tapsForwardCount: typeof data.tapsForwardCount === 'number' ? data.tapsForwardCount : 0,
+            tapsBackCount: typeof data.tapsBackCount === 'number' ? data.tapsBackCount : 0,
+            repliesCount: typeof data.repliesCount === 'number' ? data.repliesCount : 0,
             reactionCounts: data.reactionCounts || {},
             poll: data.poll,
+            music: data.music,
+            template: data.template,
+            collage: data.collage,
+            audience: data.audience,
+            closeFriendIds: Array.isArray(data.closeFriendIds) ? data.closeFriendIds : undefined,
+            allowReplies: typeof data.allowReplies === 'boolean' ? data.allowReplies : true,
+            allowComments: typeof data.allowComments === 'boolean' ? data.allowComments : undefined,
+            aiLabel: Boolean(data.aiLabel),
+            filterId: data.filterId,
+            textOverlays: Array.isArray(data.textOverlays) ? data.textOverlays : undefined,
+            stickers: Array.isArray(data.stickers) ? data.stickers : undefined,
+            mentions: Array.isArray(data.mentions) ? data.mentions : undefined,
+            partnership: data.partnership,
+            promoted: data.promoted,
             createdAt: data.createdAt,
             expiresAt: data.expiresAt,
           });
@@ -127,7 +153,7 @@ export default function StoryBar() {
     );
 
     return unsubscribe;
-  }, [blockedUsers, isFirebaseAuthenticated]);
+  }, [blockedUsers, isFirebaseAuthenticated, user?.uid]);
 
   // Group active stories by authorId
   const groupedStories = useMemo(() => {
@@ -285,7 +311,9 @@ export default function StoryBar() {
               }}
               className={`p-[2.5px] rounded-full transition-all duration-200 group-hover:scale-105 active:scale-95 block focus:outline-none ${
                 userHasStory
-                  ? 'bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-md ring-2 ring-purple-500/20'
+                  ? myUserStoryGroup?.stories.some((s) => s.audience === 'close_friends')
+                    ? 'bg-gradient-to-tr from-emerald-400 via-green-500 to-teal-500 shadow-md ring-2 ring-emerald-500/25'
+                    : 'bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-md ring-2 ring-purple-500/20'
                   : 'border-2 border-dashed border-purple-400 dark:border-purple-600 p-[3px]'
               }`}
             >
@@ -355,6 +383,7 @@ export default function StoryBar() {
         {/* Other Users' Stories */}
         {otherAuthors.map((authorGroup) => {
           const allViewed = authorGroup.stories.every((s) => viewedStoryIds.has(s.id));
+          const hasCloseFriends = authorGroup.stories.some((s) => s.audience === 'close_friends');
           const storyCount = authorGroup.stories.length;
           const expiryBadge = getGroupExpirationBadge(authorGroup.stories);
 
@@ -366,7 +395,11 @@ export default function StoryBar() {
                   onClick={() => handleOpenGroup(authorGroup.authorId)}
                   className={`p-[2.5px] rounded-full transition-all duration-200 group-hover:scale-105 active:scale-95 block focus:outline-none ${
                     allViewed
-                      ? 'bg-slate-300 dark:bg-slate-700'
+                      ? hasCloseFriends
+                        ? 'bg-emerald-500/40'
+                        : 'bg-slate-300 dark:bg-slate-700'
+                      : hasCloseFriends
+                      ? 'bg-gradient-to-tr from-emerald-400 via-green-500 to-teal-500 shadow-md ring-2 ring-emerald-500/25'
                       : 'bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 shadow-md ring-2 ring-rose-500/20'
                   }`}
                 >
@@ -378,6 +411,16 @@ export default function StoryBar() {
                     />
                   </div>
                 </button>
+
+                {/* Close Friends Star Badge */}
+                {hasCloseFriends && (
+                  <span
+                    className="absolute -top-1 -start-1 w-[18px] h-[18px] rounded-full bg-emerald-500 text-white flex items-center justify-center border-2 border-white dark:border-slate-900 shadow-md"
+                    title={language === 'ar' ? 'الأصدقاء المقربون' : 'Close Friends'}
+                  >
+                    <Star size={9} fill="currentColor" />
+                  </span>
+                )}
 
                 {/* Multiple stories indicator badge (e.g. "3") */}
                 {storyCount > 1 && (

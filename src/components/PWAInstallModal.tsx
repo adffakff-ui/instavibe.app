@@ -100,6 +100,7 @@ export function PWAInstallModal({
     isInstalled,
     isIOS,
     isEmbedded,
+    swReady,
     updateAvailable,
     checkingUpdate,
     install,
@@ -180,7 +181,7 @@ export function PWAInstallModal({
       aria-label={isAr ? 'تثبيت وتحديث تطبيق InstaVibe' : 'Install & Update InstaVibe'}
     >
       <div
-        className="max-w-md w-full mx-auto bg-gray-900 dark:bg-slate-900 text-white p-6 rounded-t-3xl sm:rounded-2xl shadow-2xl border border-gray-800 max-h-[92vh] overflow-y-auto"
+        className="max-w-md w-full mx-auto bg-gray-900 dark:bg-slate-900 text-white p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] sm:pb-6 rounded-t-3xl sm:rounded-2xl shadow-2xl border border-gray-800 max-h-[92dvh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -250,7 +251,7 @@ export function PWAInstallModal({
               type="button"
               onClick={handleDirectInstall}
               disabled={installing}
-              className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-3.5 px-4 rounded-xl text-sm transition-all shadow-lg flex items-center justify-center gap-2"
+              className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-3.5 px-4 rounded-xl text-sm transition-all shadow-lg flex items-center justify-center gap-2"
             >
               <Download size={17} />
               <span>
@@ -259,10 +260,27 @@ export function PWAInstallModal({
                     ? 'جاري التثبيت...'
                     : 'Installing...'
                   : isAr
-                  ? 'تثبيت التطبيق الآن (بنقرة واحدة)'
-                  : 'Install App Now (1-Tap)'}
+                  ? 'تثبيت التطبيق الآن (تثبيت مباشر بنقرة واحدة)'
+                  : 'Install App Now (Direct 1-Tap)'}
               </span>
             </button>
+          </div>
+        )}
+
+        {/* Native SW active notice when Chrome hasn't surfaced auto-prompt yet */}
+        {!isInstallable && !isInstalled && !isIOS && !isEmbedded && (
+          <div className="mb-4 bg-indigo-950/40 border border-indigo-700/60 p-3.5 rounded-xl text-xs text-indigo-100 space-y-1.5">
+            <p className="font-bold text-white flex items-center justify-between gap-2">
+              <span>{isAr ? 'تثبيت مباشر عبر المتصفح' : 'Direct Browser Install'}</span>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${swReady ? 'bg-emerald-500/20 text-emerald-300' : 'bg-amber-500/20 text-amber-300'}`}>
+                {swReady ? (isAr ? 'جاهز للتثبيت' : 'PWA Ready') : (isAr ? 'جاري التهيئة...' : 'Initializing...')}
+              </span>
+            </p>
+            <p className="text-indigo-200/90 leading-relaxed">
+              {isAr
+                ? 'إذا لم يظهر زر التثبيت التلقائي فوراً، اضغط قائمة المتصفح (⋮) في الأعلى ثم اختر «تثبيت التطبيق» أو «الإضافة إلى الشاشة الرئيسية».'
+                : 'If the 1-tap dialog did not appear automatically, open your browser menu (⋮) and tap "Install app" or "Add to Home Screen".'}
+            </p>
           </div>
         )}
 

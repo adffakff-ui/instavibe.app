@@ -117,6 +117,7 @@ export function usePWAInstall() {
   const [isIOS, setIsIOS] = useState(false);
   const [isAndroid, setIsAndroid] = useState(false);
   const [isEmbedded, setIsEmbedded] = useState(false);
+  const [swReady, setSwReady] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   useEffect(() => {
@@ -136,10 +137,24 @@ export function usePWAInstall() {
       setTick((n) => n + 1);
     }
 
-    const sync = () => setTick((n) => n + 1);
+    const syncSwState = () => {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.getRegistration().then((reg) => {
+          setSwReady(Boolean(reg || window.__instavibeSwRegistration));
+        }).catch(() => {});
+      }
+    };
+    syncSwState();
+
+    const sync = () => {
+      setTick((n) => n + 1);
+      syncSwState();
+    };
     listeners.add(sync);
+    window.addEventListener('instavibe:sw-registered', syncSwState);
     return () => {
       listeners.delete(sync);
+      window.removeEventListener('instavibe:sw-registered', syncSwState);
     };
   }, []);
 
@@ -178,6 +193,11 @@ export function usePWAInstall() {
         if (reg?.waiting) {
           reg.waiting.postMessage({ type: 'SKIP_WAITING' });
         }
+        await reg?.update().catch(() => {});
+      }
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
       }
     } catch (err) {
       console.warn('SW apply update notice:', err);
@@ -186,19 +206,53 @@ export function usePWAInstall() {
     }
   };
 
+  const checkRemoteVersionManifest = async (): Promise<boolean> => {
+    try {
+      const res = await fetch(`/version.json?t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) return false;
+      const data = await res.json();
+      if (data && typeof data.version === 'string' && data.version !== APP_VERSION) {
+        globalUpdateAvailable = true;
+        window.__instavibeUpdateAvailable = true;
+        window.dispatchEvent(new CustomEvent('instavibe:sw-update-ready'));
+        notifyListeners();
+        return true;
+      }
+    } catch {
+      // Ignore network/offline version check failures
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    if (!import.meta.env.PROD) return;
+    checkRemoteVersionManifest();
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        checkRemoteVersionManifest();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  }, []);
+
   const checkForUpdates = async (): Promise<'update-ready' | 'up-to-date'> => {
     setCheckingUpdate(true);
     try {
       if ('serviceWorker' in navigator) {
         const reg = window.__instavibeSwRegistration || (await navigator.serviceWorker.getRegistration());
         if (reg) {
-          await reg.update();
+          await reg.update().catch(() => {});
           if (reg.waiting || globalUpdateAvailable || window.__instavibeUpdateAvailable) {
             globalUpdateAvailable = true;
             notifyListeners();
             return 'update-ready';
           }
         }
+      }
+      const remoteHasNewer = await checkRemoteVersionManifest();
+      if (remoteHasNewer) {
+        return 'update-ready';
       }
       return globalUpdateAvailable ? 'update-ready' : 'up-to-date';
     } catch {
@@ -217,6 +271,7 @@ export function usePWAInstall() {
     isIOS,
     isAndroid,
     isEmbedded,
+    swReady,
     updateAvailable: globalUpdateAvailable,
     checkingUpdate,
     install,

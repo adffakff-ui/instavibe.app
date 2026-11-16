@@ -16,11 +16,21 @@ import {
   getDocs,
   runTransaction,
   arrayUnion,
+  arrayRemove,
   writeBatch
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { claimUsernameAndSaveProfile, detectAuthProvider } from '../lib/authService';
 import { ReactionType, normalizeReaction } from '../utils/reactions';
+import {
+  StoryAudience,
+  StoryMention,
+  StoryPartnership,
+  StoryPromotion,
+  StorySettings,
+  StorySticker,
+  StoryTextOverlay,
+} from '../types/story';
 
 export enum OperationType {
   CREATE = 'create',
@@ -29,6 +39,29 @@ export enum OperationType {
   LIST = 'list',
   GET = 'get',
   WRITE = 'write',
+}
+
+export type ReportReason =
+  | 'spam'
+  | 'harassment'
+  | 'inappropriate'
+  | 'hate_speech'
+  | 'misinformation'
+  | 'impersonation'
+  | 'violence'
+  | 'copyright'
+  | 'other';
+
+export interface SubmitReportInput {
+  targetType: 'post' | 'profile';
+  targetId: string;
+  targetAuthorId?: string;
+  targetUsername?: string;
+  targetSummary?: string;
+  reason: ReportReason;
+  reasonLabel?: string;
+  details?: string;
+  reporterUsername?: string;
 }
 
 interface FirestoreErrorInfo {
@@ -148,11 +181,11 @@ export function useFirestore() {
       await addDoc(collection(db, 'users', recipientId, 'notifications'), {
         recipientId,
         senderId: sender.uid,
-        senderUsername: sender.username,
-        senderPhotoURL: sender.photoURL,
+        senderUsername: (sender.username || 'user').slice(0, 50),
+        senderPhotoURL: (sender.photoURL || '').slice(0, 900000),
         type,
         postId: postId || null,
-        text: text || '',
+        text: (text || '').slice(0, 1000),
         read: false,
         createdAt: serverTimestamp(),
       });
@@ -564,7 +597,26 @@ export function useFirestore() {
     }
   };
 
-  const createStory = async (author: any, mediaURL: string, mediaType: 'image' | 'video' = 'image', caption: string = '', poll?: any) => {
+  const createStory = async (
+    author: any,
+    mediaURL: string,
+    mediaType: 'image' | 'video' = 'image',
+    caption: string = '',
+    poll?: any,
+    music?: any,
+    template?: any,
+    collage?: any,
+    studioOptions?: {
+      audience?: StoryAudience;
+      closeFriendIds?: string[];
+      allowReplies?: boolean;
+      filterId?: string;
+      textOverlays?: StoryTextOverlay[];
+      stickers?: StorySticker[];
+      mentions?: StoryMention[];
+      partnership?: StoryPartnership;
+    }
+  ) => {
     setLoading(true);
     try {
       const now = new Date();
@@ -574,15 +626,82 @@ export function useFirestore() {
         authorId: author.uid,
         authorUsername: author.username,
         authorPhotoURL: author.photoURL || '',
-        mediaURL,
+        mediaURL: mediaURL.slice(0, 900000),
         mediaType,
-        caption,
+        caption: caption.slice(0, 1000),
         likesCount: 0,
         reactionCounts: {},
         viewsCount: 0,
+        tapsForwardCount: 0,
+        tapsBackCount: 0,
+        repliesCount: 0,
+        audience: studioOptions?.audience === 'close_friends' ? 'close_friends' : 'everyone',
+        allowReplies: studioOptions?.allowReplies !== false,
+        allowComments: studioOptions?.allowReplies !== false,
         createdAt: serverTimestamp(),
         expiresAt: expiresAt.toISOString(),
       };
+
+      if (
+        studioOptions?.audience === 'close_friends' &&
+        Array.isArray(studioOptions.closeFriendIds)
+      ) {
+        storyData.closeFriendIds = Array.from(
+          new Set(studioOptions.closeFriendIds.filter((id) => typeof id === 'string' && id.length > 0))
+        ).slice(0, 200);
+      }
+
+      if (studioOptions?.filterId && studioOptions.filterId !== 'none') {
+        storyData.filterId = String(studioOptions.filterId).slice(0, 40);
+      }
+
+      if (Array.isArray(studioOptions?.textOverlays) && studioOptions.textOverlays.length > 0) {
+        storyData.textOverlays = studioOptions.textOverlays.slice(0, 20).map((t) => ({
+          id: String(t.id).slice(0, 40),
+          text: String(t.text).slice(0, 220),
+          x: Math.min(95, Math.max(5, Number(t.x) || 50)),
+          y: Math.min(95, Math.max(5, Number(t.y) || 50)),
+          color: String(t.color || '#ffffff').slice(0, 24),
+          bgStyle: t.bgStyle || 'none',
+          fontStyle: t.fontStyle || 'modern',
+          scale: Number(t.scale) || 1,
+        }));
+      }
+
+      if (Array.isArray(studioOptions?.stickers) && studioOptions.stickers.length > 0) {
+        storyData.stickers = studioOptions.stickers.slice(0, 20).map((s) => ({
+          id: String(s.id).slice(0, 40),
+          type: s.type || 'emoji',
+          value: String(s.value).slice(0, 80),
+          label: s.label ? String(s.label).slice(0, 60) : '',
+          x: Math.min(95, Math.max(5, Number(s.x) || 50)),
+          y: Math.min(95, Math.max(5, Number(s.y) || 50)),
+        }));
+      }
+
+      if (Array.isArray(studioOptions?.mentions) && studioOptions.mentions.length > 0) {
+        storyData.mentions = studioOptions.mentions.slice(0, 20).map((m) => ({
+          uid: String(m.uid).slice(0, 128),
+          username: String(m.username).slice(0, 50),
+          x: Math.min(95, Math.max(5, Number(m.x) || 50)),
+          y: Math.min(95, Math.max(5, Number(m.y) || 50)),
+        }));
+      }
+
+      if (
+        studioOptions?.partnership &&
+        (studioOptions.partnership.isPaid || studioOptions.partnership.partnerUsername)
+      ) {
+        storyData.partnership = {
+          isPaid: Boolean(studioOptions.partnership.isPaid),
+          ...(studioOptions.partnership.partnerId
+            ? { partnerId: String(studioOptions.partnership.partnerId).slice(0, 128) }
+            : {}),
+          ...(studioOptions.partnership.partnerUsername
+            ? { partnerUsername: String(studioOptions.partnership.partnerUsername).slice(0, 50) }
+            : {}),
+        };
+      }
 
       if (poll && poll.question && poll.optionA && poll.optionB) {
         storyData.poll = {
@@ -595,13 +714,88 @@ export function useFirestore() {
         };
       }
 
+      if (music && music.title && music.artist) {
+        storyData.music = {
+          title: String(music.title).slice(0, 100),
+          artist: String(music.artist).slice(0, 100),
+          genre: String(music.genre || '').slice(0, 50),
+        };
+      }
+
+      if (template && template.id) {
+        storyData.template = {
+          id: String(template.id).slice(0, 60),
+          name: String(template.name || template.nameAr || '').slice(0, 100),
+          prompt: String(template.prompt || template.promptAr || '').slice(0, 200),
+        };
+      }
+
+      if (collage && collage.count) {
+        storyData.collage = {
+          count: Number(collage.count) || 2,
+          style: String(collage.style || 'grid').slice(0, 30),
+        };
+      }
+
       const docRef = await addDoc(collection(db, 'stories'), storyData);
+
+      // Notify mentioned users and tagged partner
+      const notifiedIds = new Set<string>();
+      if (Array.isArray(studioOptions?.mentions)) {
+        for (const m of studioOptions.mentions) {
+          if (m.uid && m.uid !== author.uid && !notifiedIds.has(m.uid)) {
+            notifiedIds.add(m.uid);
+            await sendNotification(m.uid, author, 'comment', undefined, 'mentioned you in a story');
+          }
+        }
+      }
+      if (
+        studioOptions?.partnership?.partnerId &&
+        studioOptions.partnership.partnerId !== author.uid &&
+        !notifiedIds.has(studioOptions.partnership.partnerId)
+      ) {
+        await sendNotification(
+          studioOptions.partnership.partnerId,
+          author,
+          'comment',
+          undefined,
+          'tagged you as a story partner'
+        );
+      }
+
       return docRef.id;
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'stories');
       throw error;
     } finally {
       setLoading(false);
+    }
+  };
+
+  const addCloseFriend = async (
+    userId: string,
+    friend: { uid: string; username?: string; photoURL?: string }
+  ) => {
+    if (!userId || !friend?.uid || userId === friend.uid) return;
+    try {
+      await setDoc(doc(db, 'users', userId, 'closeFriends', friend.uid), {
+        userId,
+        friendId: friend.uid,
+        username: (friend.username || 'user').slice(0, 50),
+        photoURL: (friend.photoURL || '').slice(0, 900000),
+        createdAt: serverTimestamp(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}/closeFriends/${friend.uid}`, true);
+    }
+  };
+
+  const removeCloseFriend = async (userId: string, friendId: string) => {
+    if (!userId || !friendId) return;
+    try {
+      await deleteDoc(doc(db, 'users', userId, 'closeFriends', friendId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `users/${userId}/closeFriends/${friendId}`, true);
     }
   };
 
@@ -819,6 +1013,162 @@ export function useFirestore() {
     }
   };
 
+  const removeStoryFromHighlightAlbum = async (userId: string, albumId: string, storyId: string) => {
+    try {
+      await updateDoc(doc(db, 'users', userId, 'highlights', albumId), {
+        storyIds: arrayRemove(storyId),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${userId}/highlights/${albumId}`, true);
+    }
+  };
+
+  const updateStoryCaption = async (storyId: string, caption: string) => {
+    if (!storyId) return;
+    try {
+      await updateDoc(doc(db, 'stories', storyId), {
+        caption: caption.trim().slice(0, 1000),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `stories/${storyId}`, true);
+    }
+  };
+
+  const toggleStoryComments = async (storyId: string, enabled: boolean) => {
+    if (!storyId) return;
+    try {
+      await updateDoc(doc(db, 'stories', storyId), {
+        allowReplies: enabled,
+        allowComments: enabled,
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `stories/${storyId}`, true);
+    }
+  };
+
+  const toggleStoryAiLabel = async (storyId: string, enabled: boolean) => {
+    if (!storyId) return;
+    try {
+      await updateDoc(doc(db, 'stories', storyId), {
+        aiLabel: enabled,
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `stories/${storyId}`, true);
+    }
+  };
+
+  const updateStoryPartnership = async (
+    storyId: string,
+    partnership: StoryPartnership | null,
+    sender?: any,
+    notifyPartner?: boolean
+  ) => {
+    if (!storyId) return;
+    try {
+      const payload: StoryPartnership | null =
+        partnership && (partnership.isPaid || partnership.allowAds || partnership.partnerUsername)
+          ? {
+              isPaid: Boolean(partnership.isPaid),
+              allowAds: Boolean(partnership.allowAds),
+              ...(partnership.partnerId
+                ? { partnerId: String(partnership.partnerId).slice(0, 128) }
+                : {}),
+              ...(partnership.partnerUsername
+                ? { partnerUsername: String(partnership.partnerUsername).slice(0, 50) }
+                : {}),
+            }
+          : null;
+
+      await updateDoc(doc(db, 'stories', storyId), {
+        partnership: payload,
+      });
+
+      if (notifyPartner && payload?.partnerId && sender?.uid && payload.partnerId !== sender.uid) {
+        await sendNotification(
+          payload.partnerId,
+          sender,
+          'comment',
+          undefined,
+          'tagged you as a story partner'
+        );
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `stories/${storyId}`, true);
+    }
+  };
+
+  const updateStoryMentions = async (
+    storyId: string,
+    mentions: StoryMention[],
+    newlyMentionedUid?: string,
+    sender?: any
+  ) => {
+    if (!storyId) return;
+    try {
+      const sanitized = mentions.slice(0, 20).map((m) => ({
+        uid: String(m.uid).slice(0, 128),
+        username: String(m.username).slice(0, 50),
+        x: Math.min(95, Math.max(5, Number(m.x) || 50)),
+        y: Math.min(95, Math.max(5, Number(m.y) || 50)),
+      }));
+
+      await updateDoc(doc(db, 'stories', storyId), {
+        mentions: sanitized,
+      });
+
+      if (newlyMentionedUid && sender?.uid && newlyMentionedUid !== sender.uid) {
+        await sendNotification(
+          newlyMentionedUid,
+          sender,
+          'comment',
+          undefined,
+          'mentioned you in a story'
+        );
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `stories/${storyId}`, true);
+    }
+  };
+
+  const updateStoryPromotion = async (storyId: string, promoted: StoryPromotion | null) => {
+    if (!storyId) return;
+    try {
+      await updateDoc(doc(db, 'stories', storyId), {
+        promoted: promoted
+          ? {
+              isPromoted: Boolean(promoted.isPromoted),
+              goal: promoted.goal,
+              dailyBudget: Math.max(1, Number(promoted.dailyBudget) || 5),
+              durationDays: Math.max(1, Number(promoted.durationDays) || 3),
+              promotedAt: String(promoted.promotedAt || new Date().toISOString()).slice(0, 64),
+            }
+          : null,
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `stories/${storyId}`, true);
+    }
+  };
+
+  const saveUserStorySettings = async (userId: string, settings: StorySettings) => {
+    if (!userId) return;
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        storySettings: {
+          defaultAudience: settings.defaultAudience === 'close_friends' ? 'close_friends' : 'everyone',
+          repliesPermission:
+            settings.repliesPermission === 'off' || settings.repliesPermission === 'followers'
+              ? settings.repliesPermission
+              : 'everyone',
+          autoSaveArchive: Boolean(settings.autoSaveArchive),
+          allowStorySharing: Boolean(settings.allowStorySharing),
+          allowExternalSharing: Boolean(settings.allowExternalSharing),
+        },
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${userId}`, true);
+    }
+  };
+
   const updateUserProfile = async (
     userId: string,
     updates: {
@@ -920,12 +1270,178 @@ export function useFirestore() {
     }
   };
 
+  const submitReport = async (input: SubmitReportInput): Promise<string | undefined> => {
+    if (!auth.currentUser) {
+      throw new Error('Must be authenticated to submit a report');
+    }
+    setLoading(true);
+    try {
+      const reporterUid = auth.currentUser.uid;
+      const reporterUsername = (
+        input.reporterUsername ||
+        auth.currentUser.displayName ||
+        auth.currentUser.email?.split('@')[0] ||
+        'user'
+      ).slice(0, 50);
+
+      const reportPayload: Record<string, any> = {
+        reporterId: reporterUid,
+        reporterUsername,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        reason: input.reason,
+        status: 'pending',
+        createdAt: serverTimestamp(),
+      };
+
+      if (input.targetAuthorId) {
+        reportPayload.targetAuthorId = input.targetAuthorId;
+      }
+      if (input.targetUsername) {
+        reportPayload.targetUsername = input.targetUsername.slice(0, 50);
+      }
+      if (input.targetSummary) {
+        reportPayload.targetSummary = input.targetSummary.slice(0, 500);
+      }
+      if (input.reasonLabel) {
+        reportPayload.reasonLabel = input.reasonLabel.slice(0, 100);
+      }
+      if (input.details && input.details.trim().length > 0) {
+        reportPayload.details = input.details.trim().slice(0, 1000);
+      }
+
+      const docRef = await addDoc(collection(db, 'reports'), reportPayload);
+      return docRef.id;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'reports', true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const recordPostView = async (postId: string) => {
+    if (!postId || !auth.currentUser) return;
+    try {
+      const postRef = doc(db, 'posts', postId);
+      await runTransaction(db, async (transaction) => {
+        const postSnap = await transaction.get(postRef);
+        if (!postSnap.exists()) return;
+        const currentViews = typeof postSnap.data().viewsCount === 'number' ? postSnap.data().viewsCount : 0;
+        transaction.update(postRef, {
+          viewsCount: currentViews + 1,
+        });
+      });
+    } catch (error) {
+      console.warn('Could not record post view:', error);
+    }
+  };
+
+  const recordStoryTap = async (storyId: string, direction: 'forward' | 'back') => {
+    if (!storyId || !auth.currentUser) return;
+    try {
+      const storyRef = doc(db, 'stories', storyId);
+      const fieldName = direction === 'forward' ? 'tapsForwardCount' : 'tapsBackCount';
+      await runTransaction(db, async (transaction) => {
+        const storySnap = await transaction.get(storyRef);
+        if (!storySnap.exists()) return;
+        const data = storySnap.data();
+        const currentCount = typeof data[fieldName] === 'number' ? data[fieldName] : 0;
+        transaction.update(storyRef, {
+          [fieldName]: currentCount + 1,
+        });
+      });
+    } catch (error) {
+      console.warn('Could not record story tap in Firestore:', error);
+    }
+  };
+
+  const recordStoryReply = async (storyId: string) => {
+    if (!storyId || !auth.currentUser) return;
+    try {
+      const storyRef = doc(db, 'stories', storyId);
+      await runTransaction(db, async (transaction) => {
+        const storySnap = await transaction.get(storyRef);
+        if (!storySnap.exists()) return;
+        const data = storySnap.data();
+        const currentReplies = typeof data.repliesCount === 'number' ? data.repliesCount : 0;
+        transaction.update(storyRef, {
+          repliesCount: currentReplies + 1,
+        });
+      });
+    } catch (error) {
+      console.warn('Could not record story reply in Firestore:', error);
+    }
+  };
+
+  const keepExpiringStory = async (
+    userId: string,
+    notificationId: string,
+    storyId: string,
+    currentExpiresAt?: string
+  ) => {
+    if (!userId || !notificationId) return;
+    try {
+      if (storyId) {
+        const storyRef = doc(db, 'stories', storyId);
+        const storySnap = await getDoc(storyRef);
+        if (storySnap.exists()) {
+          const parsedCurrent = currentExpiresAt ? new Date(currentExpiresAt).getTime() : NaN;
+          const baseMs = !Number.isNaN(parsedCurrent)
+            ? Math.max(Date.now(), parsedCurrent)
+            : Date.now();
+          const extendedExpiresAt = new Date(baseMs + 24 * 60 * 60 * 1000).toISOString();
+          await updateDoc(storyRef, {
+            expiresAt: extendedExpiresAt,
+          });
+        }
+      }
+      await updateDoc(doc(db, 'users', userId, 'notifications', notificationId), {
+        read: true,
+        actionTaken: 'kept',
+        handledAt: serverTimestamp(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `stories/${storyId}`, true);
+    }
+  };
+
+  const deleteExpiringStoryNow = async (
+    userId: string,
+    notificationId: string,
+    storyId: string
+  ) => {
+    if (!userId || !notificationId) return;
+    try {
+      if (storyId) {
+        const storyRef = doc(db, 'stories', storyId);
+        const storySnap = await getDoc(storyRef);
+        if (storySnap.exists()) {
+          await deleteDoc(storyRef);
+        }
+      }
+      await updateDoc(doc(db, 'users', userId, 'notifications', notificationId), {
+        read: true,
+        actionTaken: 'deleted',
+        handledAt: serverTimestamp(),
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `stories/${storyId}`, true);
+    }
+  };
+
   return { 
     createPost, deletePost, savePost, unsavePost,
     reactToPost, likePost, unlikePost, addComment, likeComment, unlikeComment, deleteComment,
     followUser, unfollowUser, removeFollower, getOrCreateConversation, sendMessage, blockUser, 
-    unblockUser, createStory, voteStoryPoll, reactToStory, removeStoryReaction, recordStoryView,
+    unblockUser, createStory, addCloseFriend, removeCloseFriend, voteStoryPoll, reactToStory, removeStoryReaction, recordStoryView,
+    recordStoryTap, recordStoryReply,
+    keepExpiringStory, deleteExpiringStoryNow,
     deleteStory, archiveStory, createHighlightAlbum, updateHighlightAlbum,
-    deleteHighlightAlbum, addStoryToHighlightAlbum, updateUserProfile, updateCoverPhoto, loading 
+    deleteHighlightAlbum, addStoryToHighlightAlbum, removeStoryFromHighlightAlbum,
+    updateStoryCaption, toggleStoryComments, toggleStoryAiLabel,
+    updateStoryPartnership, updateStoryMentions, updateStoryPromotion,
+    saveUserStorySettings,
+    updateUserProfile, updateCoverPhoto,
+    submitReport, recordPostView, loading 
   };
 }

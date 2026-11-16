@@ -145,7 +145,7 @@ export default function ChatView({ conversationId, onBack }: { conversationId: s
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-140px)] md:h-[calc(100vh-100px)] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
+    <div className="flex flex-col h-[calc(100dvh-8.25rem-env(safe-area-inset-top,0px)-env(safe-area-inset-bottom,0px))] md:h-[calc(100dvh-6.25rem)] bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-sm">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-slate-100 dark:border-slate-800">
         <div className="flex items-center gap-3 min-w-0">

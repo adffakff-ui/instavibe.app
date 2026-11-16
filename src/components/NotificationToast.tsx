@@ -109,6 +109,7 @@ export default function NotificationToast({
 
           const data = change.doc.data() as any;
           if (!data || data.read === true) return;
+          if (data.silent === true || data.type === 'story_expiring') return;
           if (!data.senderId || data.senderId === user.uid) return;
           if (blockedUsers.includes(data.senderId)) return;
 
